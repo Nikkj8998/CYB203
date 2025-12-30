@@ -124,7 +124,6 @@ const api = {
   leads: {
     create: async (lead: any) => {
       try {
-        // Use the CRM leads API that has duplicate checking
         const response = await fetch('/backend/api/crm-leads.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -179,14 +178,8 @@ const extractSpreadsheetId = (url: string): string | null => {
       const match = url.match(pattern);
       if (match && match[1]) return match[1];
     }
-    if (url.includes('/export?format=csv') || url.endsWith('.csv')) {
-      const csvMatch = url.match(/\/d\/([a-zA-Z0-9-_]+)\/export/);
-      if (csvMatch && csvMatch[1]) return csvMatch[1];
-      return null;
-    }
     return null;
   } catch (error) {
-    console.error('Error extracting spreadsheet ID:', error);
     return null;
   }
 };
@@ -199,7 +192,6 @@ const convertToCsvUrl = (url: string): string | null => {
     if (!spreadsheetId) return null;
     return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&id=${spreadsheetId}`;
   } catch (error) {
-    console.error('Error converting to CSV URL:', error);
     return null;
   }
 };
@@ -220,30 +212,25 @@ const parseCSV = (csvText: string): SpreadsheetRow[] => {
     let inQuotes = false;
     for (let i = 0; i < line.length; i++) {
       const char = line[i];
-      if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if (char === ',' && !inQuotes) {
+      if (char === '"') inQuotes = !inQuotes;
+      else if (char === ',' && !inQuotes) {
         result.push(current.trim());
         current = '';
-      } else {
-        current += char;
-      }
+      } else current += char;
     }
     result.push(current.trim());
     return result;
   };
 
-  // Function to clean phone numbers - remove p:, +, and any unwanted prefixes
   const cleanPhoneNumber = (phone: string): string => {
     if (!phone) return '';
-    // Remove p:, p:+, and similar prefixes, then trim
     return phone.replace(/^(p\s*:?\s*\+?|\+?)/i, '').trim();
   };
 
   const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase().replace(/"/g, ''));
   const rows: SpreadsheetRow[] = [];
-  const seenPhones = new Set<string>(); // Track phone numbers to prevent duplicates
-  const seenEmails = new Set<string>(); // Track emails to prevent duplicates
+  const seenPhones = new Set<string>();
+  const seenEmails = new Set<string>();
 
   for (let i = 1; i < lines.length; i++) {
     const values = parseCSVLine(lines[i]).map(v => v.trim().replace(/"/g, ''));
@@ -252,40 +239,22 @@ const parseCSV = (csvText: string): SpreadsheetRow[] => {
     headers.forEach((header, index) => {
       const value = values[index] || '';
       switch (header) {
-        case 'name': case 'full name': case 'contact name': case 'customer name':
-          row.name = value; break;
-        case 'email': case 'email address': case 'customer email':
-          row.email = value.toLowerCase(); break;
-        case 'phone': case 'phone number': case 'mobile': case 'contact number':
-          row.phone = cleanPhoneNumber(value); break;
-        case 'country': case 'location': case 'customer country':
-          row.country = value; break;
-        case 'message': case 'comments': case 'notes': case 'description':
-          row.message = value; break;
-        case 'source': case 'source page': case 'page': case 'referral source':
-          row.sourcePage = value; break;
-        case 'plan': case 'selected plan': case 'service': case 'product':
-          row.selectedPlan = value; break;
+        case 'name': case 'full name': case 'contact name': row.name = value; break;
+        case 'email': case 'email address': row.email = value.toLowerCase(); break;
+        case 'phone': case 'mobile': row.phone = cleanPhoneNumber(value); break;
+        case 'country': case 'location': row.country = value; break;
+        case 'message': case 'comments': row.message = value; break;
+        case 'source': row.sourcePage = value; break;
+        case 'plan': case 'service': row.selectedPlan = value; break;
       }
     });
 
-    // Skip if missing required fields
     if (!row.name || !row.email) continue;
+    if (seenEmails.has(row.email)) continue;
+    if (row.phone && seenPhones.has(row.phone)) continue;
 
-    // Skip if phone number or email already exists
-    if (row.phone && seenPhones.has(row.phone)) {
-      console.log(`Skipping duplicate phone number: ${row.phone}`);
-      continue;
-    }
-    if (seenEmails.has(row.email)) {
-      console.log(`Skipping duplicate email: ${row.email}`);
-      continue;
-    }
-
-    // Add to seen sets
-    if (row.phone) seenPhones.add(row.phone);
     seenEmails.add(row.email);
-
+    if (row.phone) seenPhones.add(row.phone);
     rows.push(row);
   }
   return rows;
@@ -307,9 +276,7 @@ export const LeadsIntegrations = () => {
 
   useEffect(() => {
     loadSpreadsheets();
-    return () => {
-      Object.values(syncIntervals).forEach(interval => clearInterval(interval));
-    };
+    return () => Object.values(syncIntervals).forEach(clearInterval);
   }, []);
 
   const loadSpreadsheets = async () => {
@@ -317,815 +284,301 @@ export const LeadsIntegrations = () => {
       setLoading(true);
       const response = await api.spreadsheets.getAll();
       if (response?.success) {
-        const spreadsheetsData = response.data || [];
-        setSpreadsheets(spreadsheetsData);
-        spreadsheetsData.forEach((spreadsheet: SpreadsheetConfig) => {
-          if (spreadsheet.auto_sync && spreadsheet.is_active) {
-            startAutoSync(spreadsheet);
-          }
+        const data = response.data || [];
+        setSpreadsheets(data);
+        data.forEach((s: SpreadsheetConfig) => {
+          if (s.auto_sync && s.is_active) startAutoSync(s);
         });
-      } else {
-        toast.error(response?.message || 'Failed to load spreadsheets');
       }
-    } catch (error: any) {
-      console.error('Error loading spreadsheets:', error);
-      toast.error('Error loading spreadsheets');
     } finally {
       setLoading(false);
     }
   };
 
-  const startAutoSync = (spreadsheet: SpreadsheetConfig) => {
-    if (syncIntervals[spreadsheet.id.toString()]) {
-      clearInterval(syncIntervals[spreadsheet.id.toString()]);
-    }
-    const interval = setInterval(() => {
-      processSpreadsheet(spreadsheet);
-    }, spreadsheet.sync_interval * 60 * 1000);
-    setSyncIntervals(prev => ({ ...prev, [spreadsheet.id.toString()]: interval }));
+  const startAutoSync = (s: SpreadsheetConfig) => {
+    if (syncIntervals[s.id]) clearInterval(syncIntervals[s.id]);
+    const interval = setInterval(() => processSpreadsheet(s), s.sync_interval * 60 * 1000);
+    setSyncIntervals(prev => ({ ...prev, [s.id]: interval }));
   };
 
-  const stopAutoSync = (spreadsheetId: number) => {
-    const idStr = spreadsheetId.toString();
-    if (syncIntervals[idStr]) {
-      clearInterval(syncIntervals[idStr]);
+  const stopAutoSync = (id: number) => {
+    if (syncIntervals[id]) {
+      clearInterval(syncIntervals[id]);
       setSyncIntervals(prev => {
-        const newIntervals = { ...prev };
-        delete newIntervals[idStr];
-        return newIntervals;
+        const next = { ...prev };
+        delete next[id];
+        return next;
       });
     }
   };
 
   const testSpreadsheetUrl = async (url: string) => {
     setIsTesting(true);
-    setTestResult(null);
     try {
       const csvUrl = convertToCsvUrl(url);
-      if (!csvUrl) {
-        throw new Error('Invalid Google Sheets URL');
-      }
-      const response = await fetch(csvUrl, { method: 'HEAD' });
-      if (response.ok) {
-        setTestResult({ success: true, message: '✓ Spreadsheet URL is accessible and valid' });
-        toast.success('Spreadsheet URL test successful!');
-      } else if (response.status === 403) {
-        setTestResult({ success: false, message: '✗ Sheet is not published. Please publish the sheet first.' });
-        toast.error('Sheet is not published');
-      } else {
-        setTestResult({ success: false, message: `✗ Failed to access spreadsheet (HTTP ${response.status})` });
-        toast.error('Failed to access spreadsheet');
-      }
-    } catch (error: any) {
-      setTestResult({ success: false, message: `✗ Error: ${error.message}` });
-      toast.error('Failed to test spreadsheet URL');
+      if (!csvUrl) throw new Error('Invalid URL');
+      const res = await fetch(csvUrl, { method: 'HEAD' });
+      setTestResult(res.ok ? { success: true, message: '✓ Valid URL' } : { success: false, message: '✗ Access Denied' });
+    } catch (e: any) {
+      setTestResult({ success: false, message: e.message });
     } finally {
       setIsTesting(false);
     }
   };
 
   const handleAddSpreadsheet = async () => {
-    if (!spreadsheetName.trim() || !spreadsheetUrl.trim()) {
-      toast.error('Please enter both name and URL');
-      return;
-    }
-    const csvUrl = convertToCsvUrl(spreadsheetUrl);
-    if (!csvUrl) {
-      toast.error('Invalid Google Sheets URL');
-      return;
-    }
     try {
-      const response = await api.spreadsheets.create({
-        name: spreadsheetName,
-        url: spreadsheetUrl,
-        is_active: true,
-        sync_interval: 5,
-        auto_sync: false
-      });
-      if (response.success) {
-        setSpreadsheets(prev => [...prev, response.data]);
+      const res = await api.spreadsheets.create({ name: spreadsheetName, url: spreadsheetUrl, is_active: true, sync_interval: 5, auto_sync: false });
+      if (res.success) {
+        setSpreadsheets(prev => [...prev, res.data]);
+        setIsAddingSpreadsheet(false);
         setSpreadsheetName('');
         setSpreadsheetUrl('');
-        setIsAddingSpreadsheet(false);
-        setTestResult(null);
-        toast.success('Spreadsheet added successfully');
-      } else {
-        toast.error(response.message || 'Failed to add spreadsheet');
+        toast.success('Added successfully');
       }
-    } catch (error: any) {
-      toast.error('Error adding spreadsheet: ' + error.message);
+    } catch (e: any) {
+      toast.error(e.message);
     }
   };
 
-  const handleEditSpreadsheet = async (spreadsheet: SpreadsheetConfig) => {
+  const handleEditSpreadsheet = async (s: SpreadsheetConfig) => {
     try {
-      const response = await api.spreadsheets.update(spreadsheet.id, {
-        name: spreadsheet.name,
-        url: spreadsheet.url,
-        sync_interval: spreadsheet.sync_interval,
-        auto_sync: spreadsheet.auto_sync,
-        is_active: spreadsheet.is_active
-      });
-      if (response.success) {
-        setSpreadsheets(prev => prev.map(s => s.id === spreadsheet.id ? response.data : s));
+      const res = await api.spreadsheets.update(s.id, s);
+      if (res.success) {
+        setSpreadsheets(prev => prev.map(item => item.id === s.id ? res.data : item));
         setEditingSpreadsheetId(null);
-        if (response.data.auto_sync && response.data.is_active) {
-          startAutoSync(response.data);
-        } else {
-          stopAutoSync(spreadsheet.id);
-        }
-        toast.success('Spreadsheet updated successfully');
-      } else {
-        toast.error(response.message || 'Failed to update spreadsheet');
+        if (res.data.auto_sync && res.data.is_active) startAutoSync(res.data);
+        else stopAutoSync(s.id);
+        toast.success('Updated');
       }
-    } catch (error: any) {
-      toast.error('Error updating spreadsheet: ' + error.message);
+    } catch (e: any) {
+      toast.error(e.message);
     }
   };
 
-  const handleDeleteSpreadsheet = async (spreadsheetId: number) => {
+  const handleDeleteSpreadsheet = async (id: number) => {
     try {
-      const response = await api.spreadsheets.delete(spreadsheetId);
-      if (response.success) {
-        stopAutoSync(spreadsheetId);
-        setSpreadsheets(prev => prev.filter(s => s.id !== spreadsheetId));
-        toast.success('Spreadsheet deleted successfully');
-      } else {
-        toast.error(response.message || 'Failed to delete spreadsheet');
+      const res = await api.spreadsheets.delete(id);
+      if (res.success) {
+        setSpreadsheets(prev => prev.filter(s => s.id !== id));
+        stopAutoSync(id);
+        toast.success('Deleted');
       }
-    } catch (error: any) {
-      toast.error('Error deleting spreadsheet: ' + error.message);
+    } catch (e: any) {
+      toast.error(e.message);
     }
   };
 
-  const processSpreadsheet = async (spreadsheet: SpreadsheetConfig) => {
-    const csvUrl = convertToCsvUrl(spreadsheet.url);
-    if (!csvUrl) {
-      toast.error(`Spreadsheet "${spreadsheet.name}" has invalid URL`);
-      return;
-    }
-    if (!spreadsheet.is_active) return;
-
+  const processSpreadsheet = async (s: SpreadsheetConfig) => {
     setImporting(true);
     try {
-      const response = await fetch(csvUrl);
-      if (!response.ok) throw new Error(`Failed to fetch spreadsheet data (HTTP ${response.status})`);
+      const csvUrl = convertToCsvUrl(s.url);
+      if (!csvUrl) throw new Error('Invalid URL');
+      const res = await fetch(csvUrl);
+      const rows = parseCSV(await res.text());
       
-      const csvText = await response.text();
-      const rows = parseCSV(csvText);
-      if (rows.length === 0) throw new Error('No data found in spreadsheet');
-
-      let successCount = 0;
-      let failedCount = 0;
-      let duplicateCount = 0;
+      let success = 0;
+      let dupes = 0;
+      let fails = 0;
       const errors: string[] = [];
 
-      // Check for existing leads in database first
-      const existingLeadsResponse = await fetch('/backend/api/crm-leads.php?action=leads');
-      const existingLeadsData = await existingLeadsResponse.json();
-      const existingLeads = existingLeadsData.success ? existingLeadsData.data : [];
-      
-      // Create sets of existing emails and phone numbers
-      const existingEmails = new Set(existingLeads.map((lead: any) => lead.email?.toLowerCase()).filter(Boolean));
-      const existingPhones = new Set(existingLeads.map((lead: any) => {
-        const phone = lead.phone || lead.mobile_number;
-        return phone ? phone.replace(/^(p\s*:?\s*\+?|\+?)/i, '').trim() : null;
-      }).filter(Boolean));
-
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        if (row.name && row.email) {
-          // Check for duplicates
-          const cleanEmail = row.email.toLowerCase();
-          const cleanPhone = row.phone ? row.phone.replace(/^(p\s*:?\s*\+?|\+?)/i, '').trim() : '';
-          
-          if (existingEmails.has(cleanEmail)) {
-            duplicateCount++;
-            errors.push(`Row ${i + 1}: Email ${cleanEmail} already exists`);
-            continue;
+      for (const row of rows) {
+        try {
+          const result = await api.leads.create(row);
+          if (result.success) success++;
+          else fails++;
+        } catch (e: any) {
+          if (e.message.includes('duplicate')) dupes++;
+          else {
+            fails++;
+            errors.push(e.message);
           }
-          
-          if (cleanPhone && existingPhones.has(cleanPhone)) {
-            duplicateCount++;
-            errors.push(`Row ${i + 1}: Phone ${cleanPhone} already exists`);
-            continue;
-          }
-
-          try {
-            const result = await api.leads.create({
-              name: row.name,
-              email: row.email,
-              phone: row.phone,
-              country: row.country || '',
-              message: row.message || '',
-              sourcePage: row.sourcePage || '',
-              selectedPlan: row.selectedPlan || '',
-              company: row.country || '',
-              notes: `Imported from spreadsheet: ${spreadsheet.name}`
-            });
-            
-            // Add to existing sets to prevent duplicates within this batch
-            existingEmails.add(cleanEmail);
-            if (cleanPhone) existingPhones.add(cleanPhone);
-            successCount++;
-            
-          } catch (error: any) {
-            // Check if it's a duplicate error from backend
-            if (error.message && (error.message.toLowerCase().includes('duplicate') || error.message.toLowerCase().includes('already exists'))) {
-              duplicateCount++;
-              errors.push(`Row ${i + 1}: ${error.message}`);
-            } else {
-              failedCount++;
-              errors.push(`Row ${i + 1}: ${row.name} - ${error.message}`);
-            }
-          }
-        } else {
-          failedCount++;
-          errors.push(`Row ${i + 1}: Missing name or email`);
         }
-      }
-
-      // Determine status
-      let status: 'success' | 'partial' | 'all_duplicates' | 'error' = 'success';
-      if (successCount === 0 && duplicateCount > 0 && failedCount === 0) {
-        status = 'all_duplicates';
-      } else if (successCount > 0 && (duplicateCount > 0 || failedCount > 0)) {
-        status = 'partial';
-      } else if (failedCount > 0 && successCount === 0) {
-        status = 'error';
       }
 
       const result: SpreadsheetImportResult = {
-        spreadsheetId: spreadsheet.id,
-        spreadsheetName: spreadsheet.name,
-        success: successCount,
-        failed: failedCount,
-        duplicates: duplicateCount,
-        errors: errors.slice(0, 10),
+        spreadsheetId: s.id,
+        spreadsheetName: s.name,
+        success,
+        failed: fails,
+        duplicates: dupes,
+        errors: errors.slice(0, 5),
         timestamp: new Date().toISOString(),
-        status
+        status: success > 0 ? (fails > 0 ? 'partial' : 'success') : 'error'
       };
 
       setImportResults(result);
       setSyncHistory(prev => [result, ...prev.slice(0, 9)]);
-
-      try {
-        await api.spreadsheets.update(spreadsheet.id, { last_synced: new Date().toISOString() });
-      } catch (error) {
-        console.error('Failed to update last_synced:', error);
-      }
-
-      setSpreadsheets(prev => prev.map(s => s.id === spreadsheet.id ? { ...s, last_synced: new Date().toISOString() } : s));
-
-      // Display appropriate messages based on results
-      if (successCount > 0) {
-        toast.success(`Spreadsheet "${spreadsheet.name}": Imported ${successCount} leads`);
-      } else if (duplicateCount > 0 && failedCount === 0) {
-        toast.info(`Spreadsheet "${spreadsheet.name}": All ${duplicateCount} leads already exist in database`);
-      } else if (failedCount > 0 && successCount === 0) {
-        toast.warning(`Spreadsheet "${spreadsheet.name}": Failed to import ${failedCount} leads`);
-      }
-      
-      if (duplicateCount > 0 && (successCount > 0 || failedCount > 0)) {
-        toast.info(`Spreadsheet "${spreadsheet.name}": Skipped ${duplicateCount} duplicate leads`);
-      }
-    } catch (error: any) {
-      console.error('Import error:', error);
-      
-      // Determine if this is a "no data" error or a real error
-      const isNoDataError = error.message && error.message.includes('No data');
-      const status: 'no_data' | 'error' = isNoDataError ? 'no_data' : 'error';
-      
-      // Only show toast error for actual errors, not for "no data" case
-      if (!isNoDataError) {
-        toast.error(`Error importing spreadsheet "${spreadsheet.name}": ${error.message}`);
-      }
-      
-      setImportResults({
-        spreadsheetId: spreadsheet.id,
-        spreadsheetName: spreadsheet.name,
-        success: 0,
-        failed: 0,
-        duplicates: 0,
-        errors: [error.message],
-        timestamp: new Date().toISOString(),
-        status
-      });
+      toast.success(`Imported ${success} leads`);
+    } catch (e: any) {
+      toast.error(e.message);
     } finally {
       setImporting(false);
     }
   };
 
-  const handleProcessAllSpreadsheets = async () => {
-    const activeSpreadsheets = spreadsheets.filter(s => s.is_active);
-    if (activeSpreadsheets.length === 0) {
-      toast.error('No active spreadsheets to process');
-      return;
-    }
-
-    setImporting(true);
-    let totalSuccess = 0;
-    let totalFailed = 0;
-    let totalDuplicates = 0;
-
-    try {
-      // Fetch existing leads once at the beginning
-      const existingLeadsResponse = await fetch('/backend/api/crm-leads.php?action=leads');
-      const existingLeadsData = await existingLeadsResponse.json();
-      const existingLeads = existingLeadsData.success ? existingLeadsData.data : [];
-      
-      // Create global sets of existing emails and phone numbers
-      const globalExistingEmails = new Set(existingLeads.map((lead: any) => lead.email?.toLowerCase()).filter(Boolean));
-      const globalExistingPhones = new Set(existingLeads.map((lead: any) => {
-        const phone = lead.phone || lead.mobile_number;
-        return phone ? phone.replace(/^(p\s*:?\s*\+?|\+?)/i, '').trim() : null;
-      }).filter(Boolean));
-
-      for (const spreadsheet of activeSpreadsheets) {
-        try {
-          const csvUrl = convertToCsvUrl(spreadsheet.url);
-          if (!csvUrl) {
-            toast.error(`Spreadsheet "${spreadsheet.name}" has invalid URL`);
-            continue;
-          }
-
-          const response = await fetch(csvUrl);
-          if (!response.ok) {
-            toast.error(`Failed to fetch data from "${spreadsheet.name}"`);
-            continue;
-          }
-          
-          const csvText = await response.text();
-          const rows = parseCSV(csvText);
-          if (rows.length === 0) {
-            toast.warning(`No data found in spreadsheet "${spreadsheet.name}"`);
-            continue;
-          }
-
-          let successCount = 0;
-          let failedCount = 0;
-          let duplicateCount = 0;
-          const errors: string[] = [];
-
-          for (let i = 0; i < rows.length; i++) {
-            const row = rows[i];
-            if (row.name && row.email) {
-              // Check for duplicates against global sets
-              const cleanEmail = row.email.toLowerCase();
-              const cleanPhone = row.phone ? row.phone.replace(/^(p\s*:?\s*\+?|\+?)/i, '').trim() : '';
-              
-              if (globalExistingEmails.has(cleanEmail)) {
-                duplicateCount++;
-                errors.push(`Row ${i + 1}: Email ${cleanEmail} already exists`);
-                continue;
-              }
-              
-              if (cleanPhone && globalExistingPhones.has(cleanPhone)) {
-                duplicateCount++;
-                errors.push(`Row ${i + 1}: Phone ${cleanPhone} already exists`);
-                continue;
-              }
-
-              try {
-                const result = await api.leads.create({
-                  name: row.name,
-                  email: row.email,
-                  phone: row.phone,
-                  country: row.country || '',
-                  message: row.message || '',
-                  sourcePage: row.sourcePage || '',
-                  selectedPlan: row.selectedPlan || '',
-                  company: row.country || '',
-                  notes: `Imported from spreadsheet: ${spreadsheet.name}`
-                });
-                
-                if (result.success) {
-                  // Add to global sets to prevent duplicates in subsequent spreadsheets
-                  globalExistingEmails.add(cleanEmail);
-                  if (cleanPhone) globalExistingPhones.add(cleanPhone);
-                  successCount++;
-                } else {
-                  failedCount++;
-                  errors.push(`Row ${i + 1}: ${result.message || 'Failed to create lead'}`);
-                }
-              } catch (error: any) {
-                // Check if it's a duplicate error from backend
-                if (error.message && error.message.toLowerCase().includes('duplicate')) {
-                  duplicateCount++;
-                  errors.push(`Row ${i + 1}: ${error.message}`);
-                } else {
-                  failedCount++;
-                  errors.push(`Row ${i + 1}: ${row.name} - ${error.message}`);
-                }
-              }
-            } else {
-              failedCount++;
-              errors.push(`Row ${i + 1}: Missing name or email`);
-            }
-          }
-
-          totalSuccess += successCount;
-          totalFailed += failedCount;
-          totalDuplicates += duplicateCount;
-
-          // Update last synced for this spreadsheet
-          try {
-            await api.spreadsheets.update(spreadsheet.id, { last_synced: new Date().toISOString() });
-            setSpreadsheets(prev => prev.map(s => s.id === spreadsheet.id ? { ...s, last_synced: new Date().toISOString() } : s));
-          } catch (error) {
-            console.error('Failed to update last_synced for', spreadsheet.name, ':', error);
-          }
-
-          // Individual spreadsheet feedback
-          if (successCount > 0) {
-            toast.success(`"${spreadsheet.name}": Imported ${successCount} leads`);
-          } else if (duplicateCount > 0 && failedCount === 0) {
-            toast.info(`"${spreadsheet.name}": All ${duplicateCount} leads already exist in database`);
-          } else if (failedCount > 0 && successCount === 0) {
-            toast.warning(`"${spreadsheet.name}": Failed to import ${failedCount} leads`);
-          }
-          
-          if (duplicateCount > 0 && (successCount > 0 || failedCount > 0)) {
-            toast.info(`"${spreadsheet.name}": Skipped ${duplicateCount} duplicate leads`);
-          }
-
-        } catch (error: any) {
-          console.error(`Error processing spreadsheet "${spreadsheet.name}":`, error);
-          toast.error(`Error processing "${spreadsheet.name}": ${error.message}`);
-        }
-      }
-
-      // Overall summary
-      const summaryMessage = `Sync All Complete: ${totalSuccess} imported, ${totalDuplicates} duplicates skipped, ${totalFailed} failed across ${activeSpreadsheets.length} spreadsheets`;
-      if (totalSuccess > 0 || totalDuplicates > 0) {
-        toast.success(summaryMessage);
-      } else if (totalFailed > 0) {
-        toast.error(summaryMessage);
-      } else {
-        toast.info('No new leads found to import');
-      }
-
-    } catch (error: any) {
-      console.error('Error in sync all:', error);
-      toast.error('Error during sync all operation: ' + error.message);
-    } finally {
-      setImporting(false);
-    }
+  const handleProcessAllSpreadsheets = () => {
+    spreadsheets.filter(s => s.is_active).forEach(processSpreadsheet);
   };
 
-  const toggleSpreadsheetAutoSync = (spreadsheet: SpreadsheetConfig) => {
-    handleEditSpreadsheet({ ...spreadsheet, auto_sync: !spreadsheet.auto_sync });
+  const toggleSpreadsheetActive = (s: SpreadsheetConfig) => {
+    handleEditSpreadsheet({ ...s, is_active: !s.is_active });
   };
 
-  const toggleSpreadsheetActive = (spreadsheet: SpreadsheetConfig) => {
-    handleEditSpreadsheet({ ...spreadsheet, is_active: !spreadsheet.is_active });
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    toast.success('Copied to clipboard');
-  };
-
-  const openSpreadsheet = (url: string) => {
-    window.open(getReadableSheetsUrl(url), '_blank');
-  };
-
-  const formatLastSynced = (timestamp: string | null | undefined) => {
-    if (!timestamp) return 'Never';
-    return new Date(timestamp).toLocaleString();
-  };
-
-  if (loading) {
-    return <div className="text-center py-8">Loading integrations...</div>;
-  }
+  if (loading) return <div className="p-8 text-center text-slate-500">Loading...</div>;
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <FileSpreadsheet className="h-5 w-5" />
-                Google Sheets Integration
-              </CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">
-                Auto-import leads from Google Sheets. Configure spreadsheets below.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={handleProcessAllSpreadsheets}
-                disabled={importing || spreadsheets.filter(s => s.is_active).length === 0}
-                className="flex items-center gap-2"
-              >
-                {importing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                Sync All
-              </Button>
-            </div>
+    <div className="space-y-8 pb-8">
+      <div className="mb-8">
+        <h2 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-3">
+          <div className="p-2 bg-blue-600 rounded-lg text-white">
+            <Link className="h-6 w-6" />
           </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {spreadsheets.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                No spreadsheets configured. Add your first spreadsheet to start importing leads automatically.
+          Data Integrations
+        </h2>
+        <p className="text-gray-500 max-w-2xl text-sm">
+          Connect and synchronize your leads data from external sources.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+        <div className="xl:col-span-2 space-y-6">
+          <Card className="border-0 shadow-xl overflow-hidden bg-white rounded-2xl">
+            <CardHeader className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
+                    <FileSpreadsheet className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-xl font-bold">Google Sheets Integration</CardTitle>
+                    <p className="text-blue-100 text-xs mt-1">Automated lead importing</p>
+                  </div>
+                </div>
+                <Button 
+                  onClick={handleProcessAllSpreadsheets}
+                  disabled={importing}
+                  className="bg-white text-blue-700 hover:bg-blue-50 border-0 shadow-lg font-bold"
+                >
+                  <RefreshCw className={`h-4 w-4 mr-2 ${importing ? 'animate-spin' : ''}`} />
+                  Sync All
+                </Button>
               </div>
-            ) : (
-              <div className="space-y-4">
-                {spreadsheets.map(spreadsheet => (
-                  <div key={spreadsheet.id} className="border rounded-lg p-4 hover:bg-gray-50">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
+            </CardHeader>
+            <CardContent className="p-6">
+              <div className="space-y-6">
+                {spreadsheets.map((s) => (
+                  <div key={s.id} className="bg-slate-50 border border-slate-200 rounded-2xl p-6 hover:shadow-md transition-all">
+                    {editingSpreadsheetId === s.id ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <Input value={s.name} onChange={e => setSpreadsheets(prev => prev.map(i => i.id === s.id ? { ...i, name: e.target.value } : i))} />
+                          <Select value={s.sync_interval.toString()} onValueChange={v => setSpreadsheets(prev => prev.map(i => i.id === s.id ? { ...i, sync_interval: parseInt(v) } : i))}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>{syncIntervalOptions.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex justify-between items-center">
                           <div className="flex items-center gap-2">
-                            <Switch
-                              checked={spreadsheet.is_active}
-                              onCheckedChange={() => toggleSpreadsheetActive(spreadsheet)}
-                              className="data-[state=checked]:bg-green-600"
-                            />
-                            <h4 className="font-semibold">{spreadsheet.name}</h4>
-                            {!spreadsheet.is_active && (
-                              <Badge variant="outline" className="bg-gray-100">Inactive</Badge>
-                            )}
+                            <Switch checked={s.auto_sync} onCheckedChange={v => setSpreadsheets(prev => prev.map(i => i.id === s.id ? { ...i, auto_sync: v } : i))} />
+                            <Label>Auto-sync</Label>
                           </div>
-                          {spreadsheet.auto_sync && spreadsheet.is_active && (
-                            <Badge className="bg-blue-100 text-blue-800 flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              Auto-sync: Every {spreadsheet.sync_interval} min
-                            </Badge>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 text-sm text-gray-600 mb-2 group">
-                          <Link className="h-3 w-3" />
-                          <span className="truncate">{getReadableSheetsUrl(spreadsheet.url)}</span>
-                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => openSpreadsheet(spreadsheet.url)} title="Open spreadsheet">
-                              <ExternalLink className="h-3 w-3" />
-                            </Button>
-                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => copyToClipboard(spreadsheet.url)} title="Copy URL">
-                              <Copy className="h-3 w-3" />
-                            </Button>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => setEditingSpreadsheetId(null)}>Cancel</Button>
+                            <Button size="sm" onClick={() => handleEditSpreadsheet(s)}>Save</Button>
                           </div>
                         </div>
-
-                        <div className="flex items-center gap-4 text-sm">
-                          <div className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            <span>Last synced: {formatLastSynced(spreadsheet.last_synced)}</span>
-                          </div>
-                        </div>
-
-                        {editingSpreadsheetId === spreadsheet.id ? (
-                          <div className="mt-4 space-y-3 p-3 border rounded-lg bg-gray-50">
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <Label htmlFor={`edit-name-${spreadsheet.id}`}>Name</Label>
-                                <Input
-                                  id={`edit-name-${spreadsheet.id}`}
-                                  value={spreadsheet.name}
-                                  onChange={(e) => {
-                                    const updated = { ...spreadsheet, name: e.target.value };
-                                    setSpreadsheets(prev => prev.map(s => s.id === spreadsheet.id ? updated : s));
-                                  }}
-                                />
-                              </div>
-                              <div>
-                                <Label htmlFor={`edit-sync-${spreadsheet.id}`}>Sync Interval</Label>
-                                <Select
-                                  value={spreadsheet.sync_interval.toString()}
-                                  onValueChange={(value) => {
-                                    const updated = { ...spreadsheet, sync_interval: parseInt(value) };
-                                    setSpreadsheets(prev => prev.map(s => s.id === spreadsheet.id ? updated : s));
-                                  }}
-                                >
-                                  <SelectTrigger><SelectValue /></SelectTrigger>
-                                  <SelectContent>
-                                    {syncIntervalOptions.map(option => (
-                                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              <div className="col-span-2">
-                                <Label htmlFor={`edit-url-${spreadsheet.id}`}>Google Sheets URL</Label>
-                                <Input
-                                  id={`edit-url-${spreadsheet.id}`}
-                                  value={spreadsheet.url}
-                                  onChange={(e) => {
-                                    const updated = { ...spreadsheet, url: e.target.value };
-                                    setSpreadsheets(prev => prev.map(s => s.id === spreadsheet.id ? updated : s));
-                                  }}
-                                  placeholder="https://docs.google.com/spreadsheets/d/.../edit"
-                                />
-                              </div>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <Switch checked={spreadsheet.auto_sync} onCheckedChange={() => toggleSpreadsheetAutoSync(spreadsheet)} className="data-[state=checked]:bg-blue-600" />
-                                <Label>Enable Auto-sync</Label>
-                              </div>
-                              <div className="flex gap-2">
-                                <Button size="sm" onClick={() => setEditingSpreadsheetId(null)} variant="outline">Cancel</Button>
-                                <Button size="sm" onClick={() => handleEditSpreadsheet(spreadsheet)}>Save</Button>
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-between mt-3">
-                            <div className="flex items-center gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => processSpreadsheet(spreadsheet)} disabled={importing || !spreadsheet.is_active} className="flex items-center gap-1">
-                                <RefreshCw className="h-3 w-3" />
-                                Sync Now
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => setEditingSpreadsheetId(spreadsheet.id)} className="flex items-center gap-1">
-                                <Edit className="h-3 w-3" />
-                                Edit
-                              </Button>
-                            </div>
-                            <Button variant="ghost" size="sm" onClick={() => handleDeleteSpreadsheet(spreadsheet.id)} className="text-red-600 hover:text-red-700 hover:bg-red-50">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        )}
                       </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {isAddingSpreadsheet && (
-              <div className="border rounded-lg p-4 bg-blue-50">
-                <h4 className="font-semibold mb-3">Add New Google Sheet</h4>
-                <div className="space-y-3">
-                  <div>
-                    <Label htmlFor="spreadsheet-name">Spreadsheet Name *</Label>
-                    <Input id="spreadsheet-name" placeholder="e.g., Google Leads Sheet 2024" value={spreadsheetName} onChange={(e) => setSpreadsheetName(e.target.value)} />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <Label htmlFor="spreadsheet-url">Google Sheets URL *</Label>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => testSpreadsheetUrl(spreadsheetUrl)} disabled={!spreadsheetUrl.trim() || isTesting} className="text-xs h-6">
-                        {isTesting ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : 'Test URL'}
-                      </Button>
-                    </div>
-                    <Input id="spreadsheet-url" placeholder="https://docs.google.com/spreadsheets/d/.../edit" value={spreadsheetUrl} onChange={(e) => setSpreadsheetUrl(e.target.value)} />
-                    {testResult && (
-                      <div className={`mt-1 text-sm ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
-                        {testResult.message}
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-3">
+                            <Switch checked={s.is_active} onCheckedChange={() => toggleSpreadsheetActive(s)} />
+                            <h4 className="font-bold text-slate-800">{s.name}</h4>
+                          </div>
+                          <div className="flex gap-4 text-xs text-slate-500">
+                            <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {s.last_synced ? new Date(s.last_synced).toLocaleString() : 'Never'}</span>
+                            {s.auto_sync && <span className="text-blue-600 font-medium">Every {s.sync_interval}m</span>}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => processSpreadsheet(s)} disabled={importing}><Play className="h-4 w-4 mr-2" /> Sync</Button>
+                          <Button size="icon" variant="ghost" onClick={() => setEditingSpreadsheetId(s.id)}><Edit className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" onClick={() => handleDeleteSpreadsheet(s.id)} className="text-red-500"><Trash2 className="h-4 w-4" /></Button>
+                        </div>
                       </div>
                     )}
                   </div>
-
-                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                    <h5 className="font-semibold text-amber-800 mb-2 flex items-center gap-1">
-                      <AlertCircle className="h-4 w-4" />
-                      Important: Publishing Instructions
-                    </h5>
-                    <ol className="list-decimal list-inside text-sm text-amber-700 space-y-1">
-                      <li>Open your Google Sheet</li>
-                      <li>Click <strong>File → Share → Publish to web</strong></li>
-                      <li>Select <strong>"Entire Document"</strong> and <strong>"CSV"</strong> format</li>
-                      <li>Click <strong>"Publish"</strong></li>
-                      <li>Use the regular Google Sheets URL above</li>
-                    </ol>
-                  </div>
-
-                  <div className="text-sm text-gray-600">
-                    <p><strong>Required columns:</strong> Name, Email</p>
-                    <p><strong>Optional columns:</strong> Phone, Country, Message, Source Page, Selected Plan</p>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => { setIsAddingSpreadsheet(false); setSpreadsheetName(''); setSpreadsheetUrl(''); setTestResult(null); }}>Cancel</Button>
-                    <Button onClick={handleAddSpreadsheet} disabled={!spreadsheetName.trim() || !spreadsheetUrl.trim()}>Add Spreadsheet</Button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {!isAddingSpreadsheet && (
-              <Button onClick={() => setIsAddingSpreadsheet(true)} variant="outline" className="w-full flex items-center justify-center gap-2">
-                <Plus className="h-4 w-4" />
-                Add New Spreadsheet
-              </Button>
-            )}
-
-            {importResults && (
-              <div className="border rounded-lg p-4 bg-gray-50">
-                <h4 className="font-semibold mb-3 flex items-center gap-2">
-                  <FileSpreadsheet className="h-4 w-4" />
-                  Import Results for: {importResults.spreadsheetName}
-                </h4>
+                ))}
                 
-                {/* Status Message */}
-                {importResults.status === 'all_duplicates' && (
-                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="text-sm text-blue-800 flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>All <strong>{importResults.duplicates || 0}</strong> leads in this spreadsheet already exist in the database. No new leads to import.</span>
+                {isAddingSpreadsheet ? (
+                  <div className="bg-white border-2 border-blue-100 rounded-2xl p-6 shadow-xl space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <Input placeholder="Name" value={spreadsheetName} onChange={e => setSpreadsheetName(e.target.value)} />
+                      <Input placeholder="URL" value={spreadsheetUrl} onChange={e => setSpreadsheetUrl(e.target.value)} />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="ghost" onClick={() => setIsAddingSpreadsheet(false)}>Cancel</Button>
+                      <Button onClick={handleAddSpreadsheet}>Add Sheet</Button>
                     </div>
                   </div>
-                )}
-                {importResults.status === 'no_data' && (
-                  <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                    <div className="text-sm text-yellow-800 flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>No data found in spreadsheet. Please check if the spreadsheet contains data.</span>
-                    </div>
-                  </div>
-                )}
-                {importResults.status === 'partial' && (
-                  <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                    <div className="text-sm text-amber-800">
-                      <span><strong>{importResults.success}</strong> leads imported, <strong>{importResults.duplicates || 0}</strong> duplicates skipped</span>
-                    </div>
-                  </div>
-                )}
-                {importResults.status === 'success' && importResults.success > 0 && (
-                  <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                    <div className="text-sm text-green-800 flex items-center gap-2">
-                      <span><strong>{importResults.success}</strong> new leads successfully imported!</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-3 gap-4 mb-3">
-                  <div className="text-center p-3 bg-green-50 rounded-lg">
-                    <div className="text-2xl font-bold text-green-700">{importResults.success}</div>
-                    <div className="text-sm text-green-600">Successful</div>
-                  </div>
-                  <div className="text-center p-3 bg-yellow-50 rounded-lg">
-                    <div className="text-2xl font-bold text-yellow-700">{importResults.duplicates || 0}</div>
-                    <div className="text-sm text-yellow-600">Duplicates</div>
-                  </div>
-                  <div className="text-center p-3 bg-blue-50 rounded-lg">
-                    <div className="text-2xl font-bold text-blue-700">{new Date(importResults.timestamp).toLocaleTimeString()}</div>
-                    <div className="text-sm text-blue-600">Synced at</div>
-                  </div>
-                </div>
-                {importResults.errors.length > 0 && (
-                  <div className="mt-3">
-                    <h5 className="font-medium mb-1 text-sm">Issues ({importResults.errors.length}):</h5>
-                    <div className="max-h-32 overflow-y-auto text-xs space-y-1">
-                      {importResults.errors.map((error, index) => (
-                        <div key={index} className="text-red-600 py-1 border-b border-red-100">{error}</div>
-                      ))}
-                    </div>
-                  </div>
+                ) : (
+                  <Button variant="outline" className="w-full py-12 border-dashed border-2 rounded-2xl group" onClick={() => setIsAddingSpreadsheet(true)}>
+                    <Plus className="h-6 w-6 mb-2" />
+                    <span>Add New Spreadsheet</span>
+                  </Button>
                 )}
               </div>
-            )}
+            </CardContent>
+          </Card>
 
-            {syncHistory.length > 0 && (
-              <div className="border rounded-lg p-4">
-                <h4 className="font-semibold mb-3">Recent Sync History</h4>
-                <div className="space-y-2">
-                  {syncHistory.map((result, index) => (
-                    <div key={index} className="flex items-center justify-between text-sm p-2 hover:bg-gray-50 rounded">
-                      <div className="flex items-center gap-2">
-                        <FileSpreadsheet className="h-3 w-3" />
-                        <span className="font-medium">{result.spreadsheetName}</span>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <Badge variant="outline" className="bg-green-50 text-green-700">✓ {result.success}</Badge>
-                        <Badge variant="outline" className="bg-red-50 text-red-700">✗ {result.failed}</Badge>
-                        <span className="text-muted-foreground text-xs">{new Date(result.timestamp).toLocaleTimeString()}</span>
-                      </div>
-                    </div>
-                  ))}
+          <Card className="border-0 shadow-xl overflow-hidden rounded-2xl">
+            <CardHeader className="bg-gradient-to-r from-emerald-700 to-teal-600 text-white p-6 flex flex-row items-center gap-3">
+              <Upload className="h-6 w-6" />
+              <CardTitle>Direct Import & Export</CardTitle>
+            </CardHeader>
+            <CardContent className="p-8 grid grid-cols-2 gap-6">
+              <Button className="bg-emerald-600 hover:bg-emerald-700 h-24 flex flex-col gap-2 rounded-2xl">
+                <Upload className="h-6 w-6" /> Import Excel
+              </Button>
+              <Button variant="outline" className="h-24 flex flex-col gap-2 rounded-2xl border-blue-200 text-blue-700">
+                <Download className="h-6 w-6" /> Export Excel
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="space-y-6">
+          <Card className="border-0 shadow-xl rounded-2xl overflow-hidden">
+            <CardHeader className="bg-slate-800 text-white p-5 flex flex-row items-center gap-2">
+              <Clock className="h-5 w-5 text-blue-400" />
+              <CardTitle className="text-lg">Sync History</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0 max-h-[400px] overflow-y-auto">
+              {syncHistory.map((h, i) => (
+                <div key={i} className="p-4 border-b hover:bg-slate-50 transition-colors">
+                  <div className="flex justify-between mb-1">
+                    <span className="font-bold text-sm truncate">{h.spreadsheetName}</span>
+                    <Badge className={h.status === 'success' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}>{h.status}</Badge>
+                  </div>
+                  <div className="flex justify-between text-[10px] text-slate-500">
+                    <span>+{h.success} leads</span>
+                    <span>{new Date(h.timestamp).toLocaleTimeString()}</span>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+              ))}
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Upload className="h-5 w-5" />
-            Excel Import/Export
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-4">
-            <Button variant="outline" className="flex items-center gap-2">
-              <Upload className="h-4 w-4" />
-              Import from Excel
-            </Button>
-            <Button variant="outline" className="flex items-center gap-2">
-              <Download className="h-4 w-4" />
-              Export to Excel
-            </Button>
-          </div>
-          <p className="text-sm text-muted-foreground mt-2">
-            Upload Excel files (.xlsx, .xls) with leads data or export current leads to Excel format.
-          </p>
-        </CardContent>
-      </Card>
+          <Card className="bg-gradient-to-br from-indigo-900 to-blue-900 text-white rounded-2xl p-8 text-center space-y-4 shadow-xl border-0">
+            <AlertCircle className="h-10 w-10 mx-auto text-blue-300 opacity-50" />
+            <h4 className="text-xl font-bold">Automation Tip</h4>
+            <p className="text-blue-100 text-xs leading-relaxed opacity-80">
+              Enable Auto-sync to import leads every 5 minutes.
+            </p>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 };
