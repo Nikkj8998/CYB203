@@ -132,17 +132,18 @@ export const LeadsDashboard = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-6 bg-gradient-to-br from-white to-slate-50">
-            <div className="h-[500px]">
+            <div className="h-[600px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.leads_by_status} layout="vertical" margin={{ top: 10, right: 30, left: 220, bottom: 10 }}>
+                <BarChart data={stats.leads_by_status} layout="vertical" margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis type="number" stroke="#6b7280" tick={{ fontSize: 10 }} />
                   <YAxis 
                     dataKey="lead_status" 
                     type="category" 
-                    width={210} 
+                    width={180} 
                     tick={{ fontSize: 10, fill: '#374151' }}
                     interval={0}
+                    textAnchor="end"
                   />
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#ffffff', border: '2px solid #3b82f6', borderRadius: '8px' }}
