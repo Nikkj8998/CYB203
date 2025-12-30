@@ -99,7 +99,7 @@ const contactFormRightInfo = [
   {
     icon: Phone,
     label: "Call Us for Business",
-    value: "+91-9028541383",
+    value: "+91-9028541383 / +91-2069010200",
     link: "tel:+919028541383",
   },
   {

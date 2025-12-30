@@ -80,7 +80,7 @@ const Contact = () => {
     {
       icon: Phone,
       title: "Call Us",
-      details: ["Call Us for Business: +91-9028541383", "Call us for Career and Support: +91 8484815905"],
+      details: ["Call Us for Business: +91-9028541383 / +91-2069010200", "Call us for Career and Support: +91 8484815905"],
     },
     {
       icon: Mail,
@@ -103,7 +103,7 @@ const Contact = () => {
     {
       name: "Pune Office",
       address: "Suratwala Mark Plazzo, Hinjawadi, Pune, Maharashtra 411057",
-      phone: ["+91-8530171515 | ", "+91-9028541383"],
+      phone: ["+91-8530171515 | ", "+91-9028541383 / +91-2069010200"],
       email: "info@cybaemtech.com",
     },
   ];
