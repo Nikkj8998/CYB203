@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardHeader, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { toast } from 'sonner';
+import * as XLSX from 'xlsx';
 import {
   Select,
   SelectContent,
@@ -122,6 +123,17 @@ const api = {
     }
   },
   leads: {
+    getAll: async () => {
+      try {
+        const response = await fetch('/backend/api/crm-leads.php', { credentials: 'include' });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const result = await response.json();
+        return result.success ? result.data : [];
+      } catch (error) {
+        console.error('API Error:', error);
+        throw error;
+      }
+    },
     create: async (lead: any) => {
       try {
         const response = await fetch('/backend/api/crm-leads.php', {
@@ -138,9 +150,9 @@ const api = {
             message: lead.message || '',
             original_message: lead.message || '',
             notes: lead.notes || '',
-            lead_source: 'Spreadsheet Import',
+            lead_source: lead.source || 'Import',
             lead_status: 'New - Not Contacted',
-            entry_source: 'spreadsheet_import'
+            entry_source: 'import'
           }),
         });
         if (!response.ok) {
@@ -224,7 +236,7 @@ const parseCSV = (csvText: string): SpreadsheetRow[] => {
 
   const cleanPhoneNumber = (phone: string): string => {
     if (!phone) return '';
-    return phone.replace(/^(p\s*:?\s*\+?|\+?)/i, '').trim();
+    return phone.toString().replace(/^(p\s*:?\s*\+?|\+?)/i, '').trim();
   };
 
   const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase().replace(/"/g, ''));
@@ -268,11 +280,13 @@ export const LeadsIntegrations = () => {
   const [editingSpreadsheetId, setEditingSpreadsheetId] = useState<number | null>(null);
   const [syncHistory, setSyncHistory] = useState<SpreadsheetImportResult[]>([]);
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [importResults, setImportResults] = useState<SpreadsheetImportResult | null>(null);
   const [syncIntervals, setSyncIntervals] = useState<Record<string, NodeJS.Timeout>>({});
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadSpreadsheets();
@@ -384,11 +398,11 @@ export const LeadsIntegrations = () => {
 
       for (const row of rows) {
         try {
-          const result = await api.leads.create(row);
+          const result = await api.leads.create({ ...row, source: 'Google Sheets' });
           if (result.success) success++;
           else fails++;
         } catch (e: any) {
-          if (e.message.includes('duplicate')) dupes++;
+          if (e.message.toLowerCase().includes('duplicate')) dupes++;
           else {
             fails++;
             errors.push(e.message);
@@ -409,20 +423,97 @@ export const LeadsIntegrations = () => {
 
       setImportResults(result);
       setSyncHistory(prev => [result, ...prev.slice(0, 9)]);
-      toast.success(`Imported ${success} leads`);
+      toast.success(`Imported ${success} leads from ${s.name}`);
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(`Error processing ${s.name}: ${e.message}`);
     } finally {
       setImporting(false);
     }
   };
 
-  const handleProcessAllSpreadsheets = () => {
-    spreadsheets.filter(s => s.is_active).forEach(processSpreadsheet);
+  const handleProcessAllSpreadsheets = async () => {
+    const active = spreadsheets.filter(s => s.is_active);
+    if (active.length === 0) {
+      toast.info('No active spreadsheets to sync');
+      return;
+    }
+    for (const s of active) {
+      await processSpreadsheet(s);
+    }
   };
 
   const toggleSpreadsheetActive = (s: SpreadsheetConfig) => {
     handleEditSpreadsheet({ ...s, is_active: !s.is_active });
+  };
+
+  const handleExportExcel = async () => {
+    setExporting(true);
+    try {
+      const leads = await api.leads.getAll();
+      if (!leads || leads.length === 0) {
+        toast.info('No leads found to export');
+        return;
+      }
+      const ws = XLSX.utils.json_to_sheet(leads);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Leads");
+      XLSX.writeFile(wb, `leads_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+      toast.success('Leads exported successfully');
+    } catch (e: any) {
+      toast.error('Export failed: ' + e.message);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      setImporting(true);
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws) as any[];
+
+        let success = 0;
+        let dupes = 0;
+        let fails = 0;
+
+        for (const row of data) {
+          try {
+            const formattedLead = {
+              name: row.name || row['Full Name'] || row['Name'],
+              email: row.email || row['Email Address'] || row['Email'],
+              phone: row.phone || row['Mobile Number'] || row['Phone'],
+              country: row.country || row['Location'] || row['Country'],
+              message: row.message || row['Message'],
+              source: 'Excel Import'
+            };
+
+            if (!formattedLead.name || !formattedLead.email) continue;
+
+            const result = await api.leads.create(formattedLead);
+            if (result.success) success++;
+            else fails++;
+          } catch (e: any) {
+            if (e.message.toLowerCase().includes('duplicate')) dupes++;
+            else fails++;
+          }
+        }
+        toast.success(`Import complete: ${success} imported, ${dupes} duplicates skipped`);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      } catch (err: any) {
+        toast.error('Import failed: ' + err.message);
+      } finally {
+        setImporting(false);
+      }
+    };
+    reader.readAsBinaryString(file);
   };
 
   if (loading) return <div className="p-8 text-center text-slate-500">Loading...</div>;
@@ -467,6 +558,9 @@ export const LeadsIntegrations = () => {
             </CardHeader>
             <CardContent className="p-6">
               <div className="space-y-6">
+                {spreadsheets.length === 0 && !isAddingSpreadsheet && (
+                  <p className="text-center text-slate-400 py-8">No spreadsheets connected yet.</p>
+                )}
                 {spreadsheets.map((s) => (
                   <div key={s.id} className="bg-slate-50 border border-slate-200 rounded-2xl p-6 hover:shadow-md transition-all">
                     {editingSpreadsheetId === s.id ? (
@@ -549,11 +643,31 @@ export const LeadsIntegrations = () => {
               <CardTitle>Direct Import & Export</CardTitle>
             </CardHeader>
             <CardContent className="p-8 grid grid-cols-2 gap-6">
-              <Button className="bg-emerald-600 hover:bg-emerald-700 h-24 flex flex-col gap-2 rounded-2xl">
-                <Upload className="h-6 w-6" /> Import Excel
-              </Button>
-              <Button variant="outline" className="h-24 flex flex-col gap-2 rounded-2xl border-blue-200 text-blue-700">
-                <Download className="h-6 w-6" /> Export Excel
+              <div className="flex flex-col">
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={handleImportExcel}
+                  className="hidden"
+                  ref={fileInputRef}
+                />
+                <Button 
+                  className="bg-emerald-600 hover:bg-emerald-700 h-24 flex flex-col gap-2 rounded-2xl"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={importing}
+                >
+                  <Upload className={`h-6 w-6 ${importing ? 'animate-spin' : ''}`} /> 
+                  {importing ? 'Importing...' : 'Import Excel'}
+                </Button>
+              </div>
+              <Button 
+                variant="outline" 
+                className="h-24 flex flex-col gap-2 rounded-2xl border-blue-200 text-blue-700"
+                onClick={handleExportExcel}
+                disabled={exporting}
+              >
+                <Download className={`h-6 w-6 ${exporting ? 'animate-spin' : ''}`} /> 
+                {exporting ? 'Exporting...' : 'Export Excel'}
               </Button>
             </CardContent>
           </Card>
@@ -566,14 +680,16 @@ export const LeadsIntegrations = () => {
               <CardTitle className="text-lg">Sync History</CardTitle>
             </CardHeader>
             <CardContent className="p-0 max-h-[400px] overflow-y-auto">
-              {syncHistory.map((h, i) => (
+              {syncHistory.length === 0 ? (
+                <p className="p-8 text-center text-slate-400 text-sm">No sync history yet.</p>
+              ) : syncHistory.map((h, i) => (
                 <div key={i} className="p-4 border-b hover:bg-slate-50 transition-colors">
                   <div className="flex justify-between mb-1">
                     <span className="font-bold text-sm truncate">{h.spreadsheetName}</span>
                     <Badge className={h.status === 'success' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}>{h.status}</Badge>
                   </div>
                   <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>+{h.success} leads</span>
+                    <span>+{h.success} leads, {h.duplicates || 0} dups</span>
                     <span>{new Date(h.timestamp).toLocaleTimeString()}</span>
                   </div>
                 </div>
