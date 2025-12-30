@@ -299,7 +299,16 @@ const Contact = () => {
                     </div>
                   </div>
                   <h3 className="text-white font-semibold mb-3 text-base">{info.label}</h3>
-                  {info.link ? (
+                  {info.label === "Call Us for Business" ? (
+                    <div className="flex flex-col gap-1">
+                      <a href="tel:+919028541383" className="text-gray-400 hover:text-primary transition-colors text-sm block">
+                        +91-9028541383
+                      </a>
+                      <a href="tel:+912069010200" className="text-gray-400 hover:text-primary transition-colors text-sm block">
+                        +91-2069010200
+                      </a>
+                    </div>
+                  ) : info.link ? (
                     <a href={info.link} className="text-gray-400 hover:text-primary transition-colors text-sm block">
                       {info.value}
                     </a>
