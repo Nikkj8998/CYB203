@@ -1,0 +1,36 @@
+# .htaccess for cPanel deployment
+# Copy this file to your public_html/ directory and rename to .htaccess
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    
+    # Serve uploads from the public/uploads directory 
+    # Images are stored in public_html/public/uploads and should be accessible at /public/uploads/
+    RewriteRule ^public/uploads/(.*)$ public/uploads/$1 [L]
+    
+    # Rewrite /api/* requests to /backend/api/*
+    RewriteRule ^api/(.*)$ backend/api/$1 [L,QSA,NC]
+    
+    # Handle React Router - redirect all non-file/directory requests to index.html
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} !^/backend/
+    RewriteCond %{REQUEST_URI} !^/public/uploads/
+    RewriteRule ^(.*)$ /index.html [L,QSA]
+</IfModule>
+
+# Security headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-XSS-Protection "1; mode=block"
+</IfModule>
+
+# Prevent directory listing
+Options -Indexes
+
+# Set proper MIME types
+<IfModule mod_mime.c>
+    AddType application/javascript js
+    AddType application/json json
+</IfModule>

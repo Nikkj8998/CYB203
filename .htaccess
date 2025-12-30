@@ -1,0 +1,55 @@
+
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Don't rewrite files or directories that exist
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Redirect /api/ requests to the API directory
+    RewriteRule ^api/(.*)$ api/$1 [L]
+
+    # Static HTML routing for all main pages
+    RewriteRule ^about/?$ about.html [L]
+    RewriteRule ^contact/?$ contact.html [L]
+    RewriteRule ^careers/?$ Careers.html [L]
+    RewriteRule ^industries/?$ Industries.html [L]
+    RewriteRule ^leadership/?$ Leadership.html [L]
+    RewriteRule ^resources/?$ Resources.html [L]
+    
+    # Blog post routes - handle through PHP for SEO meta tag injection
+    RewriteRule ^blog-post/(.+)/?$ blog.php [QSA,L]
+    RewriteRule ^blog/(.+)/?$ blog.php [QSA,L]
+    # Generic dynamic routes for custom blog types (but not for known static pages)
+    RewriteRule ^([a-z]+-[a-z0-9-]+)/([a-z0-9-]+)/?$ blog.php [QSA,L]
+
+    # Service pages (PascalCase filenames)
+    RewriteRule ^ai-data-analytics/?$ AIDataAnalytics.html [L]
+    RewriteRule ^cloud-solutions/?$ CloudSolutions.html [L]
+    RewriteRule ^computer-amc-services/?$ ComputerAMCServices.html [L]
+    RewriteRule ^cybersecurity-services/?$ CybersecurityServices.html [L]
+    RewriteRule ^digital-marketing/?$ DigitalMarketing.html [L]
+    RewriteRule ^enterprise-solutions/?$ EnterpriseSolutions.html [L]
+    RewriteRule ^it-augmentation/?$ ITAugmentation.html [L]
+    RewriteRule ^life-at-cybaemtech/?$ LifeAtCybaemTech.html [L]
+    RewriteRule ^managed-services/?$ ManagedServices.html [L]
+
+    # Default: send all other requests to index.html (for React Router)
+    RewriteRule ^ index.html [L]
+</IfModule>
+
+# Enable CORS for API requests
+<IfModule mod_headers.c>
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+    Header set Access-Control-Allow-Headers "Content-Type, Authorization"
+</IfModule>
+
+# Prevent directory listing
+Options -Indexes
+
+# Default charset
+AddDefaultCharset UTF-8

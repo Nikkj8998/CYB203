@@ -1,0 +1,7 @@
+<!-- Add this right before the closing </head> tag -->
+<script>
+  window.addEventListener('load', function() {
+    console.log('PostHog API Key:', window.env?.VITE_POSTHOG_API_KEY ? 'Present' : 'Missing');
+    console.log('PostHog Host:', window.env?.VITE_POSTHOG_HOST ? 'Present' : 'Missing');
+  });
+</script>
