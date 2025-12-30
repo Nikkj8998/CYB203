@@ -494,7 +494,18 @@ export const LeadsIntegrations = () => {
                         <div className="space-y-2">
                           <div className="flex items-center gap-3">
                             <Switch checked={s.is_active} onCheckedChange={() => toggleSpreadsheetActive(s)} />
-                            <h4 className="font-bold text-slate-800">{s.name}</h4>
+                            <div className="flex flex-col">
+                              <h4 className="font-bold text-slate-800">{s.name}</h4>
+                              <a 
+                                href={getReadableSheetsUrl(s.url)} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="text-[10px] text-blue-500 hover:underline flex items-center gap-1 mt-0.5 truncate max-w-[300px]"
+                              >
+                                <Link className="h-2 w-2" />
+                                {s.url}
+                              </a>
+                            </div>
                           </div>
                           <div className="flex gap-4 text-xs text-slate-500">
                             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {s.last_synced ? new Date(s.last_synced).toLocaleString() : 'Never'}</span>
