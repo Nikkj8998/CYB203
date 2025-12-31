@@ -429,7 +429,13 @@ function updateLead($pdo) {
             if (in_array($field, $existingColumns) && $field !== 'id' && !isset($params[":$field"])) {
                 $paramKey = ":$field";
                 $updates[] = "$field = $paramKey";
-                $params[$paramKey] = $value;
+                
+                // Special handling for is_junk (boolean/integer)
+                if ($field === 'is_junk') {
+                    $params[$paramKey] = ($value === true || $value === 1 || $value === '1' || $value === 'true') ? 1 : 0;
+                } else {
+                    $params[$paramKey] = ($value === '' || $value === null) ? null : $value;
+                }
             }
         }
     }
@@ -512,7 +518,13 @@ function createLead($pdo) {
                 $paramKey = ":$field";
                 $columns[] = $field;
                 $placeholders[] = $paramKey;
-                $params[$paramKey] = $value;
+                
+                // Special handling for is_junk (boolean/integer)
+                if ($field === 'is_junk') {
+                    $params[$paramKey] = ($value === true || $value === 1 || $value === '1' || $value === 'true') ? 1 : 0;
+                } else {
+                    $params[$paramKey] = ($value === '' || $value === null) ? null : $value;
+                }
             }
         }
     }
