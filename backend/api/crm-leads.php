@@ -375,73 +375,6 @@ function getLeadById($pdo, $id) {
     }
 }
 
-function createLead($pdo) {
-    $input = json_decode(file_get_contents('php://input'), true);
-    
-    if (empty($input['full_name']) || empty($input['mobile_number'])) {
-        jsonResponse(false, [], 'Full name and mobile number are required');
-    }
-    
-    $tableName = getLeadsTableName($pdo);
-    $leadId = generateLeadId($pdo);
-    
-    $sql = "INSERT INTO $tableName (
-        lead_id, name, full_name, phone, mobile_number, email, company_name, country, location, website,
-        lead_source, campaign_name, service_interest, lead_status, lead_quality,
-        lead_owner, lead_generated_at, preferred_channel, expected_deal_value,
-        probability_percent, message, original_message, notes, is_junk, created_by, entry_source
-    ) VALUES (
-        :lead_id, :name, :full_name, :phone, :mobile_number, :email, :company_name, :country, :location, :website,
-        :lead_source, :campaign_name, :service_interest, :lead_status, :lead_quality,
-        :lead_owner, :lead_generated_at, :preferred_channel, :expected_deal_value,
-        :probability_percent, :message, :original_message, :notes, :is_junk, :created_by, :entry_source
-    )";
-    
-    try {
-        $stmt = $pdo->prepare($sql);
-        
-        // Convert is_junk to integer (0 or 1)
-        $isJunk = 0;
-        if ($input['is_junk'] === true || $input['is_junk'] === 1 || $input['is_junk'] === '1' || $input['is_junk'] === 'true') {
-            $isJunk = 1;
-        }
-        
-        $stmt->execute([
-            ':lead_id' => $leadId,
-            ':name' => $input['full_name'] ?? '',
-            ':full_name' => $input['full_name'] ?? '',
-            ':phone' => $input['mobile_number'] ?? '',
-            ':mobile_number' => $input['mobile_number'] ?? '',
-            ':email' => $input['email'] ?? '',
-            ':company_name' => $input['company_name'] ?? '',
-            ':country' => $input['location'] ?? '',
-            ':location' => $input['location'] ?? '',
-            ':website' => $input['website'] ?? '',
-            ':lead_source' => $input['lead_source'] ?? 'Other',
-            ':campaign_name' => $input['campaign_name'] ?? '',
-            ':service_interest' => $input['service_interest'] ?? '',
-            ':lead_status' => $input['lead_status'] ?? 'New - Not Contacted',
-            ':lead_quality' => $input['lead_quality'] ?? 'Cold',
-            ':lead_owner' => $input['lead_owner'] ?? 'Unassigned',
-            ':lead_generated_at' => !empty($input['lead_generated_at']) ? $input['lead_generated_at'] : date('Y-m-d H:i:s'),
-            ':preferred_channel' => $input['preferred_channel'] ?? 'Call',
-            ':expected_deal_value' => (int)($input['expected_deal_value'] ?? 0),
-            ':probability_percent' => (int)($input['probability_percent'] ?? 0),
-            ':message' => $input['original_message'] ?? '',
-            ':original_message' => $input['original_message'] ?? '',
-            ':notes' => $input['notes'] ?? '',
-            ':is_junk' => $isJunk,
-            ':created_by' => $input['created_by'] ?? 'System',
-            ':entry_source' => 'manual'
-        ]);
-        
-        $newId = $pdo->lastInsertId();
-        jsonResponse(true, ['id' => $newId, 'lead_id' => $leadId], 'Lead created successfully');
-    } catch (PDOException $e) {
-        jsonResponse(false, [], 'Failed to create lead', $e->getMessage());
-    }
-}
-
 function updateLead($pdo) {
     $input = json_decode(file_get_contents('php://input'), true);
     
@@ -456,14 +389,18 @@ function updateLead($pdo) {
         jsonResponse(false, [], 'No fields to update');
     }
     
-    $allowedFields = [
-        'full_name', 'mobile_number', 'email', 'company_name', 'location', 'website',
-        'lead_source', 'campaign_name', 'service_interest', 'lead_status', 'lead_quality',
-        'lead_owner', 'lead_generated_at', 'first_contact_at', 'last_contact_at',
-        'next_followup_at', 'preferred_channel', 'expected_deal_value', 'probability_percent',
-        'original_message', 'notes', 'is_junk', 'name', 'phone', 'country', 'message'
-    ];
-    
+    // Get existing columns to avoid errors
+    $tableName = getLeadsTableName($pdo);
+    $existingColumns = [];
+    try {
+        $stmt = $pdo->query("DESCRIBE $tableName");
+        while ($row = $stmt->fetch()) {
+            $existingColumns[] = $row['Field'];
+        }
+    } catch (Exception $e) {
+        $existingColumns = ['id', 'full_name', 'email', 'phone', 'message', 'status'];
+    }
+
     $fieldMappings = [
         'full_name' => 'name',
         'mobile_number' => 'phone',
@@ -472,40 +409,147 @@ function updateLead($pdo) {
         'name' => 'full_name',
         'phone' => 'mobile_number',
         'country' => 'location',
-        'message' => 'original_message'
+        'message' => 'original_message',
+        'lead_status' => 'status',
+        'status' => 'lead_status',
+        'lead_source' => 'source',
+        'source' => 'lead_source'
     ];
     
     $updates = [];
     $params = [':id' => $id];
     
-    foreach ($allowedFields as $field) {
-        if (array_key_exists($field, $input)) {
-            $updates[] = "$field = :$field";
-            $params[":$field"] = $input[$field];
-            
-            if (isset($fieldMappings[$field])) {
-                $mappedField = $fieldMappings[$field];
-                $updates[] = "$mappedField = :mapped_$field";
-                $params[":mapped_$field"] = $input[$field];
+    foreach ($input as $key => $value) {
+        $fieldsToUpdate = [$key];
+        if (isset($fieldMappings[$key])) {
+            $fieldsToUpdate[] = $fieldMappings[$key];
+        }
+
+        foreach ($fieldsToUpdate as $field) {
+            if (in_array($field, $existingColumns) && $field !== 'id' && !isset($params[":$field"])) {
+                $paramKey = ":$field";
+                $updates[] = "$field = $paramKey";
+                $params[$paramKey] = $value;
             }
         }
     }
     
-    $updates[] = "updated_at = NOW()";
+    if (empty($updates)) {
+        jsonResponse(true, ['affected_rows' => 0], 'No valid fields to update for this table schema');
+    }
+
+    if (in_array('updated_at', $existingColumns)) {
+        $updates[] = "updated_at = NOW()";
+    }
     
-    $tableName = getLeadsTableName($pdo);
     $sql = "UPDATE $tableName SET " . implode(', ', $updates) . " WHERE id = :id";
     
     try {
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
-        
-        // Return 200 for frontend to consider it a success even if rowCount is 0
         jsonResponse(true, ['affected_rows' => $stmt->rowCount()], 'Lead updated successfully');
     } catch (PDOException $e) {
-        // Fallback: try update without extra fields if first attempt fails
         error_log("Update failed: " . $e->getMessage());
-        jsonResponse(false, [], 'Failed to update lead. Please ensure all database fields exist.', $e->getMessage());
+        jsonResponse(false, [], 'Failed to update lead. Error: ' . $e->getMessage());
+    }
+}
+
+function createLead($pdo) {
+    $input = json_decode(file_get_contents('php://input'), true);
+    
+    if (empty($input['full_name']) && empty($input['name'])) {
+        jsonResponse(false, [], 'Name is required');
+    }
+    
+    $tableName = getLeadsTableName($pdo);
+    
+    // Get existing columns to avoid errors
+    $existingColumns = [];
+    try {
+        $stmt = $pdo->query("DESCRIBE $tableName");
+        while ($row = $stmt->fetch()) {
+            $existingColumns[] = $row['Field'];
+        }
+    } catch (Exception $e) {
+        $existingColumns = ['full_name', 'email', 'phone', 'message'];
+    }
+
+    $fieldMappings = [
+        'full_name' => 'name',
+        'mobile_number' => 'phone',
+        'location' => 'country',
+        'original_message' => 'message',
+        'name' => 'full_name',
+        'phone' => 'mobile_number',
+        'country' => 'location',
+        'message' => 'original_message',
+        'lead_status' => 'status',
+        'status' => 'lead_status',
+        'lead_source' => 'source',
+        'source' => 'lead_source'
+    ];
+
+    $columns = [];
+    $placeholders = [];
+    $params = [];
+
+    // Ensure lead_id is generated if column exists
+    if (in_array('lead_id', $existingColumns)) {
+        $leadId = generateLeadId($pdo);
+        $columns[] = 'lead_id';
+        $placeholders[] = ':lead_id';
+        $params[':lead_id'] = $leadId;
+    }
+
+    foreach ($input as $key => $value) {
+        $fieldsToInsert = [$key];
+        if (isset($fieldMappings[$key])) {
+            $fieldsToInsert[] = $fieldMappings[$key];
+        }
+
+        foreach ($fieldsToInsert as $field) {
+            if (in_array($field, $existingColumns) && !in_array($field, $columns)) {
+                $paramKey = ":$field";
+                $columns[] = $field;
+                $placeholders[] = $paramKey;
+                $params[$paramKey] = $value;
+            }
+        }
+    }
+
+    // Default values for common fields if they exist and aren't provided
+    $defaults = [
+        'lead_status' => 'New - Not Contacted',
+        'status' => 'New - Not Contacted',
+        'lead_source' => 'manual',
+        'entry_source' => 'manual',
+        'created_at' => date('Y-m-d H:i:s'),
+        'lead_generated_at' => date('Y-m-d H:i:s')
+    ];
+
+    foreach ($defaults as $field => $val) {
+        if (in_array($field, $existingColumns) && !in_array($field, $columns)) {
+            $paramKey = ":def_$field";
+            $columns[] = $field;
+            $placeholders[] = $paramKey;
+            $params[$paramKey] = $val;
+        }
+    }
+
+    if (empty($columns)) {
+        jsonResponse(false, [], 'No valid fields to insert');
+    }
+
+    $sql = "INSERT INTO $tableName (" . implode(', ', $columns) . ") VALUES (" . implode(', ', $placeholders) . ")";
+    
+    try {
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $newId = $pdo->lastInsertId();
+        jsonResponse(true, ['id' => $newId], 'Lead created successfully');
+    } catch (PDOException $e) {
+        error_log("Insert failed: " . $e->getMessage());
+        jsonResponse(false, [], 'Failed to create lead. Error: ' . $e->getMessage());
     }
 }
 
