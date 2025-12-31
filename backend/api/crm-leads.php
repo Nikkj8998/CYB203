@@ -415,7 +415,7 @@ function updateLead($pdo) {
         jsonResponse(false, [], 'No fields to update');
     }
     
-    // Get existing columns to avoid errors
+    // Get existing columns
     $tableName = getLeadsTableName($pdo);
     $existingColumns = [];
     try {
@@ -427,42 +427,52 @@ function updateLead($pdo) {
         $existingColumns = ['id', 'full_name', 'email', 'phone', 'message', 'status'];
     }
 
+    // Map frontend field names to database column names
     $fieldMappings = [
-        'full_name' => 'name',
-        'mobile_number' => 'phone',
-        'location' => 'country',
-        'original_message' => 'message',
-        'name' => 'full_name',
-        'phone' => 'mobile_number',
-        'country' => 'location',
-        'message' => 'original_message',
-        'lead_status' => 'status',
         'status' => 'lead_status',
-        'lead_source' => 'source',
-        'source' => 'lead_source'
+        'full_name' => 'full_name',
+        'email' => 'email',
+        'phone' => 'mobile_number',
+        'mobile_number' => 'mobile_number',
+        'company' => 'company_name',
+        'company_name' => 'company_name',
+        'questions' => 'message',
+        'message' => 'message',
+        'note' => 'notes',
+        'notes' => 'notes',
+        'source' => 'lead_source',
+        'lead_source' => 'lead_source',
+        'lead_status' => 'lead_status',
+        'lead_quality' => 'lead_quality',
+        'lead_owner' => 'lead_owner',
+        'preferred_channel' => 'preferred_channel',
+        'expected_deal_value' => 'expected_deal_value',
+        'probability' => 'probability',
+        'next_follow_up' => 'next_follow_up',
+        'is_junk' => 'is_junk'
     ];
     
     $updates = [];
     $params = [':id' => $id];
+    $updateCount = 0;
     
+    // Process each input field exactly once
     foreach ($input as $key => $value) {
-        $fieldsToUpdate = [$key];
-        if (isset($fieldMappings[$key])) {
-            $fieldsToUpdate[] = $fieldMappings[$key];
-        }
-
-        foreach ($fieldsToUpdate as $field) {
-            if (in_array($field, $existingColumns) && $field !== 'id' && !isset($params[":$field"])) {
-                $paramKey = ":$field";
-                $updates[] = "$field = $paramKey";
-                
-                // Special handling for is_junk (boolean/integer)
-                if ($field === 'is_junk') {
-                    $params[$paramKey] = ($value === true || $value === 1 || $value === '1' || $value === 'true') ? 1 : 0;
-                } else {
-                    $params[$paramKey] = ($value === '' || $value === null) ? null : $value;
-                }
+        // Find the database column name
+        $dbColumn = isset($fieldMappings[$key]) ? $fieldMappings[$key] : $key;
+        
+        // Only update if the column exists in the table
+        if (in_array($dbColumn, $existingColumns) && $dbColumn !== 'id') {
+            $paramKey = ":param_" . $updateCount;
+            $updates[] = "$dbColumn = $paramKey";
+            
+            // Special handling for is_junk (boolean/integer)
+            if ($dbColumn === 'is_junk') {
+                $params[$paramKey] = ($value === true || $value === 1 || $value === '1' || $value === 'true') ? 1 : 0;
+            } else {
+                $params[$paramKey] = ($value === '' || $value === null) ? null : $value;
             }
+            $updateCount++;
         }
     }
     
@@ -470,9 +480,10 @@ function updateLead($pdo) {
         jsonResponse(true, ['affected_rows' => 0], 'No valid fields to update for this table schema');
     }
 
+    // Add updated_at timestamp
     if (in_array('updated_at', $existingColumns)) {
-        $updates[] = "updated_at = :updated_at_value";
-        $params[':updated_at_value'] = date('Y-m-d H:i:s');
+        $updates[] = "updated_at = :updated_at";
+        $params[':updated_at'] = date('Y-m-d H:i:s');
     }
     
     $sql = "UPDATE $tableName SET " . implode(', ', $updates) . " WHERE id = :id";
@@ -483,6 +494,8 @@ function updateLead($pdo) {
         jsonResponse(true, ['affected_rows' => $stmt->rowCount()], 'Lead updated successfully');
     } catch (PDOException $e) {
         error_log("Update failed: " . $e->getMessage());
+        error_log("SQL: " . $sql);
+        error_log("Params: " . json_encode($params));
         jsonResponse(false, [], 'Failed to update lead. Error: ' . $e->getMessage());
     }
 }
