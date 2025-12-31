@@ -76,29 +76,32 @@ export const DashboardLayout = () => {
       )}
 
       {/* Sidebar */}
-      <aside className={`fixed left-0 top-0 h-full w-64 bg-white border-r border-gray-200 transition-transform duration-300 z-30 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+      <aside className={`fixed left-0 top-0 h-full bg-white border-r border-gray-200 transition-all duration-300 z-30 ${
+        sidebarOpen 
+          ? 'w-64 translate-x-0' 
+          : 'w-20 lg:translate-x-0 -translate-x-full'
         }`}>
         <div className="flex flex-col h-full overflow-hidden">
           {/* Logo */}
           <div className="p-6 border-b border-gray-200">
             <div className="flex items-center gap-2">
-              <div className="bg-blue-600 rounded-lg p-2">
+              <div className="bg-blue-600 rounded-lg p-2 shrink-0">
                 <LayoutDashboard className="h-6 w-6 text-white" />
               </div>
-              <div>
-                <h1 className="font-bold text-lg">Cybaem CMS</h1>
-                <p className="text-xs text-gray-500">Content Management</p>
+              <div className={`transition-opacity duration-300 ${sidebarOpen ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>
+                <h1 className="font-bold text-lg whitespace-nowrap">Cybaem CMS</h1>
+                <p className="text-xs text-gray-500 whitespace-nowrap">Content Management</p>
               </div>
             </div>
           </div>
 
-          {/* Create New Button - only show for users with content permission */}
+          {/* Create New Button */}
           {(isSuperAdmin() || hasPermission('content')) && (
             <div className="p-4">
-              <Button className="w-full" asChild>
+              <Button className={`w-full ${!sidebarOpen ? 'px-0 justify-center' : ''}`} asChild>
                 <Link to="/admin/content/new">
-                  <PlusCircle className="mr-2 h-4 w-4" />
-                  Create New
+                  <PlusCircle className={`${sidebarOpen ? 'mr-2' : ''} h-4 w-4`} />
+                  <span className={sidebarOpen ? '' : 'hidden'}>Create New</span>
                 </Link>
               </Button>
             </div>
@@ -111,12 +114,6 @@ export const DashboardLayout = () => {
               scrollbarWidth: 'thin',
               scrollbarColor: 'transparent transparent'
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.scrollbarColor = 'rgb(156 163 175) transparent';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.scrollbarColor = 'transparent transparent';
-            }}
           >
             {visibleNavItems.map((item) => {
               const Icon = item.icon;
@@ -125,13 +122,18 @@ export const DashboardLayout = () => {
                 <Link
                   key={item.path}
                   to={item.path}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive
+                  title={!sidebarOpen ? item.label : ''}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                    !sidebarOpen ? 'justify-center px-0' : ''
+                  } ${isActive
                     ? 'bg-blue-600 text-white'
                     : 'text-gray-700 hover:bg-gray-100'
                     }`}
                 >
-                  <Icon className="h-5 w-5" />
-                  <span>{item.label}</span>
+                  <Icon className="h-5 w-5 shrink-0" />
+                  <span className={`transition-opacity duration-300 ${sidebarOpen ? 'opacity-100' : 'hidden'}`}>
+                    {item.label}
+                  </span>
                 </Link>
               );
             })}
@@ -141,18 +143,21 @@ export const DashboardLayout = () => {
           <div className="p-4 border-t border-gray-200">
             <Button
               variant="ghost"
-              className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50"
+              className={`w-full text-red-600 hover:text-red-700 hover:bg-red-50 ${
+                !sidebarOpen ? 'justify-center px-0' : 'justify-start'
+              }`}
               onClick={handleLogout}
+              title={!sidebarOpen ? 'Logout' : ''}
             >
-              <LogOut className="mr-2 h-4 w-4" />
-              Logout
+              <LogOut className={`${sidebarOpen ? 'mr-2' : ''} h-4 w-4`} />
+              <span className={sidebarOpen ? '' : 'hidden'}>Logout</span>
             </Button>
           </div>
         </div>
       </aside>
 
       {/* Main Content */}
-      <div className={`transition-all duration-300 ${sidebarOpen ? 'lg:ml-64' : 'ml-0'}`}>
+      <div className={`transition-all duration-300 ${sidebarOpen ? 'lg:ml-64' : 'lg:ml-20 ml-0'}`}>
         {/* Header */}
         <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
           <div className="flex items-center justify-between px-6 py-4">
