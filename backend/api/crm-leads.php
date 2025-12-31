@@ -901,6 +901,17 @@ function handleDashboard($pdo) {
         $stats = [];
         $tableName = getLeadsTableName($pdo);
         
+        // Get existing columns to avoid errors
+        $existingColumns = [];
+        try {
+            $stmt = $pdo->query("DESCRIBE $tableName");
+            while ($row = $stmt->fetch()) {
+                $existingColumns[] = $row['Field'];
+            }
+        } catch (Exception $e) {
+            $existingColumns = ['id', 'created_at', 'lead_status', 'status', 'is_junk'];
+        }
+
         $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName");
         $result = $stmt->fetch();
         $stats['total_leads'] = (int)($result['cnt'] ?? 0);
@@ -909,40 +920,77 @@ function handleDashboard($pdo) {
         $result = $stmt->fetch();
         $stats['new_leads_30_days'] = (int)($result['cnt'] ?? 0);
         
-        $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName WHERE lead_status IN ('Attempted Contact', 'Connected - Follow-up Needed', 'contacted')");
-        $result = $stmt->fetch();
-        $stats['contacted_leads'] = (int)($result['cnt'] ?? 0);
+        $statusCol = in_array('lead_status', $existingColumns) ? 'lead_status' : (in_array('status', $existingColumns) ? 'status' : null);
         
-        $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName WHERE lead_status IN ('Qualified - Proposal Sent', 'Negotiation / In Discussion', 'qualified', 'proposal')");
-        $result = $stmt->fetch();
-        $stats['pipeline_leads'] = (int)($result['cnt'] ?? 0);
+        if ($statusCol) {
+            $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName WHERE $statusCol IN ('Attempted Contact', 'Connected - Follow-up Needed', 'contacted')");
+            $result = $stmt->fetch();
+            $stats['contacted_leads'] = (int)($result['cnt'] ?? 0);
+            
+            $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName WHERE $statusCol IN ('Qualified - Proposal Sent', 'Negotiation / In Discussion', 'qualified', 'proposal')");
+            $result = $stmt->fetch();
+            $stats['pipeline_leads'] = (int)($result['cnt'] ?? 0);
+            
+            $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName WHERE $statusCol = 'Closed - Won'");
+            $result = $stmt->fetch();
+            $stats['closed_won'] = (int)($result['cnt'] ?? 0);
+            
+            $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName WHERE $statusCol = 'Closed - Lost'");
+            $result = $stmt->fetch();
+            $stats['closed_lost'] = (int)($result['cnt'] ?? 0);
+        } else {
+            $stats['contacted_leads'] = 0;
+            $stats['pipeline_leads'] = 0;
+            $stats['closed_won'] = 0;
+            $stats['closed_lost'] = 0;
+        }
         
-        $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName WHERE lead_status = 'Closed - Won'");
-        $result = $stmt->fetch();
-        $stats['closed_won'] = (int)($result['cnt'] ?? 0);
+        $junkQuery = [];
+        if ($statusCol) $junkQuery[] = "$statusCol = 'Dead / Junk'";
+        if (in_array('is_junk', $existingColumns)) $junkQuery[] = "is_junk = 1";
         
-        $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName WHERE lead_status = 'Closed - Lost'");
-        $result = $stmt->fetch();
-        $stats['closed_lost'] = (int)($result['cnt'] ?? 0);
+        if (!empty($junkQuery)) {
+            $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName WHERE " . implode(' OR ', $junkQuery));
+            $result = $stmt->fetch();
+            $stats['dead_junk'] = (int)($result['cnt'] ?? 0);
+        } else {
+            $stats['dead_junk'] = 0;
+        }
         
-        $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM $tableName WHERE lead_status = 'Dead / Junk' OR is_junk = 1");
-        $result = $stmt->fetch();
-        $stats['dead_junk'] = (int)($result['cnt'] ?? 0);
-        
-        $stmt = $pdo->query("SELECT COALESCE(lead_status, status, 'New - Not Contacted') as lead_status, COUNT(*) as count FROM $tableName GROUP BY COALESCE(lead_status, status, 'New - Not Contacted') ORDER BY count DESC");
+        $statusGroup = $statusCol ? "COALESCE(lead_status, status, 'New - Not Contacted')" : "'New'";
+        $stmt = $pdo->query("SELECT $statusGroup as lead_status, COUNT(*) as count FROM $tableName GROUP BY $statusGroup ORDER BY count DESC");
         $stats['leads_by_status'] = $stmt->fetchAll();
         
-        $stmt = $pdo->query("SELECT COALESCE(lead_source, entry_source, sourcePage, 'Website') as lead_source, COUNT(*) as count FROM $tableName GROUP BY COALESCE(lead_source, entry_source, sourcePage, 'Website') ORDER BY count DESC");
+        $sourceFields = [];
+        if (in_array('lead_source', $existingColumns)) $sourceFields[] = 'lead_source';
+        if (in_array('entry_source', $existingColumns)) $sourceFields[] = 'entry_source';
+        if (in_array('sourcePage', $existingColumns)) $sourceFields[] = 'sourcePage';
+        
+        $sourceGroup = !empty($sourceFields) ? "COALESCE(" . implode(', ', $sourceFields) . ", 'Website')" : "'Website'";
+        $stmt = $pdo->query("SELECT $sourceGroup as lead_source, COUNT(*) as count FROM $tableName GROUP BY $sourceGroup ORDER BY count DESC");
         $stats['leads_by_source'] = $stmt->fetchAll();
         
         $stmt = $pdo->query("SELECT DATE(created_at) as date, COUNT(*) as count FROM $tableName WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY DATE(created_at) ORDER BY date");
         $stats['leads_per_day'] = $stmt->fetchAll();
         
-        $stmt = $pdo->query("SELECT COALESCE(lead_owner, 'Unassigned') as lead_owner, COALESCE(SUM(expected_deal_value), 0) as total_value FROM $tableName GROUP BY COALESCE(lead_owner, 'Unassigned') ORDER BY total_value DESC");
-        $stats['deal_value_by_owner'] = $stmt->fetchAll();
+        if (in_array('lead_owner', $existingColumns)) {
+            $valueCol = in_array('expected_deal_value', $existingColumns) ? 'COALESCE(SUM(expected_deal_value), 0)' : '0';
+            $stmt = $pdo->query("SELECT COALESCE(lead_owner, 'Unassigned') as lead_owner, $valueCol as total_value FROM $tableName GROUP BY COALESCE(lead_owner, 'Unassigned') ORDER BY total_value DESC");
+            $stats['deal_value_by_owner'] = $stmt->fetchAll();
+        } else {
+            $stats['deal_value_by_owner'] = [];
+        }
         
-        $stmt = $pdo->query("SELECT id, COALESCE(lead_id, CONCAT('LEAD-', LPAD(id, 4, '0'))) as lead_id, COALESCE(full_name, name) as full_name, company_name, next_followup_at, COALESCE(lead_status, status, 'New - Not Contacted') as lead_status FROM $tableName WHERE next_followup_at < NOW() AND lead_status NOT IN ('Closed - Won', 'Closed - Lost', 'Dead / Junk') ORDER BY next_followup_at ASC LIMIT 20");
-        $stats['overdue_followups'] = $stmt->fetchAll();
+        if (in_array('next_followup_at', $existingColumns)) {
+            $leadIdExpr = in_array('lead_id', $existingColumns) ? "lead_id" : "CONCAT('LEAD-', LPAD(id, 4, '0'))";
+            $nameExpr = in_array('full_name', $existingColumns) ? "full_name" : (in_array('name', $existingColumns) ? "name" : "''");
+            $compExpr = in_array('company_name', $existingColumns) ? "company_name" : "''";
+            
+            $stmt = $pdo->query("SELECT id, $leadIdExpr as lead_id, $nameExpr as full_name, $compExpr as company_name, next_followup_at, $statusGroup as lead_status FROM $tableName WHERE next_followup_at < NOW() AND $statusGroup NOT IN ('Closed - Won', 'Closed - Lost', 'Dead / Junk') ORDER BY next_followup_at ASC LIMIT 20");
+            $stats['overdue_followups'] = $stmt->fetchAll();
+        } else {
+            $stats['overdue_followups'] = [];
+        }
         
         jsonResponse(true, $stats);
     } catch (PDOException $e) {
