@@ -343,12 +343,15 @@ function getLeadById($pdo, $id) {
         $lead = $stmt->fetch();
         
         if ($lead) {
+            // Get existing columns to ensure we include everything
+            $existingColumns = array_keys($lead);
+            
             $formattedLead = [
                 'id' => $lead['id'],
                 'lead_id' => $lead['lead_id'] ?? ('LEAD-' . str_pad($lead['id'], 4, '0', STR_PAD_LEFT)),
                 'status' => $lead['lead_status'] ?? $lead['status'] ?? 'New',
                 'full_name' => $lead['full_name'] ?? $lead['name'] ?? '',
-                'company' => $lead['company_name'] ?? '',
+                'company' => $lead['company_name'] ?? $lead['company'] ?? '',
                 'phone' => $lead['mobile_number'] ?? $lead['phone'] ?? '',
                 'email' => $lead['email'] ?? '',
                 'source' => $lead['lead_source'] ?? $lead['entry_source'] ?? $lead['sourcePage'] ?? 'Website',
@@ -357,6 +360,29 @@ function getLeadById($pdo, $id) {
                 'note' => $lead['notes'] ?? '',
                 'updated_at' => $lead['updated_at'] ?? null,
             ];
+
+            // Add any other existing columns to the response
+            foreach ($lead as $key => $value) {
+                if (!isset($formattedLead[$key])) {
+                    $formattedLead[$key] = $value;
+                }
+            }
+            
+            // Map common field names for frontend compatibility
+            $fieldMappings = [
+                'name' => 'full_name',
+                'phone' => 'mobile_number',
+                'country' => 'location',
+                'message' => 'original_message',
+                'status' => 'lead_status',
+                'source' => 'lead_source'
+            ];
+
+            foreach ($fieldMappings as $dbField => $formField) {
+                if (isset($lead[$dbField]) && !isset($formattedLead[$formField])) {
+                    $formattedLead[$formField] = $lead[$dbField];
+                }
+            }
             
             try {
                 $actStmt = $pdo->prepare("SELECT * FROM crm_activities WHERE lead_id = :lead_id ORDER BY activity_date DESC");
