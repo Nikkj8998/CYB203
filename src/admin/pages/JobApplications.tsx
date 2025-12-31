@@ -86,8 +86,10 @@ export const JobApplications = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedApplication, setSelectedApplication] = useState<JobApplication | null>(null);
+  const [selectedApplications, setSelectedApplications] = useState<number[]>([]);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -178,6 +180,7 @@ export const JobApplications = () => {
       
       if (response.success) {
         setApplications(applications.filter(app => app.id !== id));
+        setSelectedApplications(prev => prev.filter(appId => appId !== id));
         setDeleteId(null);
         toast.success('Application deleted successfully');
       } else {
@@ -186,6 +189,46 @@ export const JobApplications = () => {
     } catch (error) {
       toast.error('Error deleting application');
       console.error(error);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedApplications.length === 0) return;
+
+    try {
+      const results = await Promise.all(
+        selectedApplications.map(id => api.jobApplications.delete(id))
+      );
+
+      const successCount = results.filter(r => r.success).length;
+      
+      if (successCount > 0) {
+        setApplications(prev => prev.filter(app => !selectedApplications.includes(app.id)));
+        setSelectedApplications([]);
+        toast.success(`Successfully deleted ${successCount} applications`);
+      } else {
+        toast.error('Failed to delete applications');
+      }
+      setBulkDeleteDialogOpen(false);
+    } catch (error) {
+      toast.error('Error during bulk deletion');
+      console.error(error);
+    }
+  };
+
+  const toggleSelectApplication = (id: number) => {
+    setSelectedApplications(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    const pageAppIds = paginatedApplications.map(a => a.id);
+    const allSelected = pageAppIds.every(id => selectedApplications.includes(id));
+    if (allSelected) {
+      setSelectedApplications(prev => prev.filter(id => !pageAppIds.includes(id)));
+    } else {
+      setSelectedApplications(prev => [...new Set([...prev, ...pageAppIds])]);
     }
   };
 
@@ -254,6 +297,15 @@ export const JobApplications = () => {
             <p className="text-gray-500">Manage and review all job applications</p>
           </div>
           <div className="flex gap-2">
+            {selectedApplications.length > 0 && (
+              <Button
+                variant="destructive"
+                onClick={() => setBulkDeleteDialogOpen(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Selected ({selectedApplications.length})
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => loadApplications(false)}
@@ -318,6 +370,24 @@ export const JobApplications = () => {
                   <Table>
                     <TableHeader className="bg-gray-50">
                       <TableRow>
+                        <TableHead className="w-[50px]">
+                          <div 
+                            className="flex items-center justify-center cursor-pointer h-8 w-8 hover:bg-gray-100 rounded"
+                            onClick={toggleSelectAll}
+                          >
+                            <div className={`h-4 w-4 rounded border flex items-center justify-center transition-colors ${
+                              paginatedApplications.length > 0 && paginatedApplications.every(a => selectedApplications.includes(a.id))
+                                ? 'bg-blue-600 border-blue-600'
+                                : 'bg-white border-gray-300'
+                            }`}>
+                              {paginatedApplications.length > 0 && paginatedApplications.every(a => selectedApplications.includes(a.id)) && (
+                                <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                </svg>
+                              )}
+                            </div>
+                          </div>
+                        </TableHead>
                         <TableHead className="w-[100px]">ID</TableHead>
                         <TableHead>Applicant</TableHead>
                         <TableHead>Position</TableHead>
@@ -328,7 +398,25 @@ export const JobApplications = () => {
                     </TableHeader>
                     <TableBody>
                       {paginatedApplications.map((application) => (
-                        <TableRow key={application.id} className="hover:bg-gray-50 transition-colors">
+                        <TableRow key={application.id} className={`hover:bg-gray-50 transition-colors ${selectedApplications.includes(application.id) ? 'bg-blue-50/50' : ''}`}>
+                          <TableCell>
+                            <div 
+                              className="flex items-center justify-center cursor-pointer h-8 w-8 hover:bg-gray-100 rounded"
+                              onClick={() => toggleSelectApplication(application.id)}
+                            >
+                              <div className={`h-4 w-4 rounded border flex items-center justify-center transition-colors ${
+                                selectedApplications.includes(application.id)
+                                  ? 'bg-blue-600 border-blue-600'
+                                  : 'bg-white border-gray-300'
+                              }`}>
+                                {selectedApplications.includes(application.id) && (
+                                  <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                              </div>
+                            </div>
+                          </TableCell>
                           <TableCell className="font-medium">#{application.id}</TableCell>
                           <TableCell>
                             <div className="flex flex-col">
@@ -633,6 +721,27 @@ export const JobApplications = () => {
                 className="bg-red-600 hover:bg-red-700"
               >
                 Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Bulk Delete Confirmation Dialog */}
+        <AlertDialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Multiple Applications?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete {selectedApplications.length} selected applications? This action cannot be undone and will permanently remove all associated resume files.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={handleBulkDelete}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Delete All
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
