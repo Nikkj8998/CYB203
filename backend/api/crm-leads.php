@@ -471,7 +471,8 @@ function updateLead($pdo) {
     }
 
     if (in_array('updated_at', $existingColumns)) {
-        $updates[] = "updated_at = NOW()";
+        $updates[] = "updated_at = :updated_at_value";
+        $params[':updated_at_value'] = date('Y-m-d H:i:s');
     }
     
     $sql = "UPDATE $tableName SET " . implode(', ', $updates) . " WHERE id = :id";
