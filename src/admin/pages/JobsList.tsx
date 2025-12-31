@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../services/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -11,7 +10,6 @@ import {
   Briefcase, 
   Loader2, 
   Clock, 
-  ChevronRight, 
   Search,
   Calendar,
   Building2,
@@ -19,12 +17,18 @@ import {
   Filter,
   CheckSquare,
   Square,
-  MoreVertical,
-  ExternalLink
+  Save,
+  X,
+  AlignLeft,
+  ListChecks,
+  Activity,
+  DollarSign
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import {
   Table,
   TableBody,
@@ -44,11 +48,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -63,6 +67,8 @@ interface Job {
   location: string;
   type: string;
   experience?: string;
+  salary?: string;
+  department?: string;
   description: string;
   requirements?: string;
   responsibilities?: string;
@@ -78,6 +84,11 @@ export const JobsList = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedJobs, setSelectedJobs] = useState<number[]>([]);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  
+  // Modal State
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     fetchJobs();
@@ -117,9 +128,6 @@ export const JobsList = () => {
 
   const handleBulkDelete = async () => {
     try {
-      // In a real app, we'd have a bulk delete API. 
-      // For now, we'll delete one by one as we did in JobApplications or assume an API exists.
-      // Since functionality shouldn't change, I'll stick to what's available or pattern used elsewhere.
       const deletePromises = selectedJobs.map(id => api.jobs.delete(id));
       await Promise.all(deletePromises);
       toast.success(`Deleted ${selectedJobs.length} jobs successfully`);
@@ -129,6 +137,67 @@ export const JobsList = () => {
     } catch (error) {
       toast.error('Failed to delete some jobs');
     }
+  };
+
+  const handleEditClick = (job: Job) => {
+    setEditingJob({ ...job });
+    setEditDialogOpen(true);
+  };
+
+  const handleCreateClick = () => {
+    setEditingJob({
+      id: 0,
+      title: '',
+      location: '',
+      type: 'Full-time',
+      experience: '',
+      salary: '',
+      department: '',
+      description: '',
+      requirements: '',
+      responsibilities: '',
+      status: 'active',
+      created_at: new Date().toISOString()
+    });
+    setEditDialogOpen(true);
+  };
+
+  const handleSaveJob = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingJob) return;
+
+    if (!editingJob.title || !editingJob.location || !editingJob.description) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      let response;
+      if (editingJob.id === 0) {
+        response = await api.jobs.create(editingJob);
+      } else {
+        response = await api.jobs.update(editingJob.id, editingJob);
+      }
+
+      if (response.success) {
+        toast.success(editingJob.id === 0 ? 'Job created successfully' : 'Job updated successfully');
+        setEditDialogOpen(false);
+        fetchJobs();
+      } else {
+        toast.error(response.message || 'Failed to save job');
+      }
+    } catch (error) {
+      console.error('Error saving job:', error);
+      toast.error('An error occurred while saving');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleInputChange = (field: keyof Job, value: string) => {
+    if (!editingJob) return;
+    setEditingJob(prev => prev ? ({ ...prev, [field]: value }) : null);
   };
 
   const toggleSelectJob = (id: number) => {
@@ -178,11 +247,9 @@ export const JobsList = () => {
               <RefreshCw className="h-4 w-4 mr-2" />
               Refresh
             </Button>
-            <Button asChild>
-              <Link to="/admin/jobs/new">
-                <Plus className="h-4 w-4 mr-2" />
-                Post Job
-              </Link>
+            <Button onClick={handleCreateClick}>
+              <Plus className="h-4 w-4 mr-2" />
+              Post Job
             </Button>
           </div>
         </div>
@@ -321,28 +388,24 @@ export const JobsList = () => {
                           </div>
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreVertical className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-40">
-                              <DropdownMenuItem asChild>
-                                <Link to={`/admin/jobs/edit/${job.id}`} className="flex items-center">
-                                  <Pencil className="h-4 w-4 mr-2" />
-                                  Edit Job
-                                </Link>
-                              </DropdownMenuItem>
-                              <DropdownMenuItem 
-                                className="text-red-600 focus:text-red-600"
-                                onClick={() => setDeleteId(job.id)}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                              onClick={() => handleEditClick(job)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              onClick={() => setDeleteId(job.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -353,6 +416,174 @@ export const JobsList = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Edit/Create Modal */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold flex items-center gap-2">
+              <Briefcase className="h-6 w-6 text-blue-600" />
+              {editingJob?.id === 0 ? 'Post New Opening' : 'Edit Job Posting'}
+            </DialogTitle>
+          </DialogHeader>
+          
+          {editingJob && (
+            <form onSubmit={handleSaveJob} className="space-y-6 pt-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold text-gray-700">Job Title *</Label>
+                    <div className="relative">
+                      <Briefcase className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                      <Input
+                        placeholder="e.g., Senior Developer"
+                        value={editingJob.title}
+                        onChange={(e) => handleInputChange('title', e.target.value)}
+                        className="pl-10"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold text-gray-700">Location *</Label>
+                      <div className="relative">
+                        <MapPin className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                        <Input
+                          placeholder="e.g., Remote"
+                          value={editingJob.location}
+                          onChange={(e) => handleInputChange('location', e.target.value)}
+                          className="pl-10"
+                          required
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold text-gray-700">Job Type</Label>
+                      <Select value={editingJob.type} onValueChange={(v) => handleInputChange('type', v)}>
+                        <SelectTrigger>
+                          <div className="flex items-center gap-2">
+                            <Clock className="h-4 w-4 text-gray-400" />
+                            <SelectValue />
+                          </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Full-time">Full-time</SelectItem>
+                          <SelectItem value="Part-time">Part-time</SelectItem>
+                          <SelectItem value="Contract">Contract</SelectItem>
+                          <SelectItem value="Internship">Internship</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold text-gray-700">Department</Label>
+                      <div className="relative">
+                        <Building2 className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                        <Input
+                          placeholder="Engineering"
+                          value={editingJob.department || ''}
+                          onChange={(e) => handleInputChange('department', e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold text-gray-700">Experience</Label>
+                      <Input
+                        placeholder="3-5 years"
+                        value={editingJob.experience || ''}
+                        onChange={(e) => handleInputChange('experience', e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold text-gray-700">Compensation</Label>
+                      <div className="relative">
+                        <DollarSign className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                        <Input
+                          placeholder="₹12 - ₹18 LPA"
+                          value={editingJob.salary || ''}
+                          onChange={(e) => handleInputChange('salary', e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold text-gray-700">Visibility Status</Label>
+                      <Select value={editingJob.status} onValueChange={(v) => handleInputChange('status', v)}>
+                        <SelectTrigger>
+                          <div className="flex items-center gap-2">
+                            <Activity className="h-4 w-4 text-gray-400" />
+                            <SelectValue />
+                          </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="active">Active (Visible)</SelectItem>
+                          <SelectItem value="inactive">Inactive (Hidden)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold text-gray-700">Job Description *</Label>
+                    <Textarea
+                      placeholder="Brief overview..."
+                      value={editingJob.description}
+                      onChange={(e) => handleInputChange('description', e.target.value)}
+                      className="min-h-[120px]"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                      <ListChecks className="h-4 w-4 text-blue-600" />
+                      Responsibilities
+                    </Label>
+                    <Textarea
+                      placeholder="• List key responsibilities..."
+                      value={editingJob.responsibilities || ''}
+                      onChange={(e) => handleInputChange('responsibilities', e.target.value)}
+                      className="min-h-[100px]"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                      <AlignLeft className="h-4 w-4 text-blue-600" />
+                      Requirements
+                    </Label>
+                    <Textarea
+                      placeholder="• List qualifications..."
+                      value={editingJob.requirements || ''}
+                      onChange={(e) => handleInputChange('requirements', e.target.value)}
+                      className="min-h-[100px]"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-6 border-t">
+                <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>
+                  <X className="h-4 w-4 mr-2" />
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={submitting}>
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                  {editingJob.id === 0 ? 'Create Job' : 'Update Job'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Confirmation Dialogs */}
       <AlertDialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>
