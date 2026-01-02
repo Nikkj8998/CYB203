@@ -109,10 +109,10 @@ export const DashboardLayout = () => {
 
           {/* Navigation */}
           <nav
-            className="flex-1 p-4 space-y-2 overflow-y-auto admin-sidebar-scroll"
+            className="flex-1 p-4 space-y-2 overflow-y-auto admin-sidebar-scroll scrollbar-hidden hover:scrollbar-visible"
             style={{
               scrollbarWidth: 'thin',
-              scrollbarColor: 'transparent transparent'
+              scrollbarColor: 'rgb(209, 213, 219) transparent'
             }}
           >
             {visibleNavItems.map((item) => {

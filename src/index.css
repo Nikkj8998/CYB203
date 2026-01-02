@@ -675,6 +675,15 @@ All colors MUST be HSL.
   }
 }
 /* Admin Sidebar Scrollbar - Hover to Show */
+.admin-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.admin-sidebar-scroll:hover {
+  scrollbar-color: rgb(209 213 219) transparent;
+}
+
 .admin-sidebar-scroll::-webkit-scrollbar {
   width: 6px;
 }
@@ -690,11 +699,45 @@ All colors MUST be HSL.
 }
 
 .admin-sidebar-scroll:hover::-webkit-scrollbar-thumb {
-  background: rgb(156 163 175);
+  background: rgb(209 213 219);
 }
 
 .admin-sidebar-scroll:hover::-webkit-scrollbar-thumb:hover {
-  background: rgb(107 114 128);
+  background: rgb(156 163 175);
+}
+
+/* Scrollbar Visibility Classes */
+.scrollbar-hidden {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-hidden::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-hidden::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+  transition: background 0.3s ease;
+}
+
+.hover\:scrollbar-visible:hover {
+  scrollbar-color: rgb(209 213 219) transparent;
+}
+
+.hover\:scrollbar-visible:hover::-webkit-scrollbar-thumb {
+  background: rgb(209 213 219);
+  transition: background 0.3s ease;
+}
+
+.hover\:scrollbar-visible:hover::-webkit-scrollbar-thumb:hover {
+  background: rgb(156 163 175);
 }
 
 /* Quill Editor Custom Font Styles */
